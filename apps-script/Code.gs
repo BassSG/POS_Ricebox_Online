@@ -62,6 +62,9 @@ function route_(request) {
       case 'upsertMenu':
         result = upsertMenu_(request.payload.menu, request);
         break;
+      case 'upsertInventory':
+        result = upsertInventory_(request.payload.inventory, request);
+        break;
       case 'summary':
         result = summary_();
         break;
@@ -281,6 +284,43 @@ function upsertMenu_(menu, request) {
   });
 
   return { menuId: menu.menu_id };
+}
+
+function upsertInventory_(inventory, request) {
+  if (!inventory || !inventory.item_id) throw new Error('Missing inventory item');
+  const sheet = sheet_('Inventory');
+  const rowIndex = findRowIndex_('Inventory', 'item_id', inventory.item_id);
+  const rowObject = {
+    item_id: inventory.item_id,
+    name: inventory.name || '',
+    category: inventory.category || 'ingredient',
+    unit: inventory.unit || 'unit',
+    on_hand: number_(inventory.on_hand),
+    reorder_level: number_(inventory.reorder_level),
+    cost_per_unit: number_(inventory.cost_per_unit),
+    supplier: inventory.supplier || '',
+    last_updated: inventory.last_updated || new Date().toISOString().slice(0, 10),
+    note: inventory.note || ''
+  };
+
+  if (rowIndex === -1) {
+    append_('Inventory', rowObject);
+  } else {
+    const values = HEADERS.Inventory.map((header) => rowObject[header] === undefined ? '' : rowObject[header]);
+    sheet.getRange(rowIndex, 1, 1, values.length).setValues([values]);
+  }
+
+  logSync_({
+    actor: 'pos',
+    action: 'upsertInventory',
+    status: 'success',
+    message: inventory.item_id,
+    payload_json: JSON.stringify(rowObject),
+    device_id: request.deviceId || '',
+    app_version: request.appVersion || ''
+  });
+
+  return { itemId: inventory.item_id };
 }
 
 function summary_() {

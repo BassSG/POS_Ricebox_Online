@@ -422,7 +422,7 @@ function renderMenuManager() {
   `).join('');
 }
 
-function renderInventory() {
+function renderInventoryLegacy() {
   document.getElementById('inventoryList').innerHTML = state.inventory.map((item) => {
     const low = numberValue(item.on_hand) <= numberValue(item.reorder_level);
     return `
@@ -432,6 +432,36 @@ function renderInventory() {
           <p class="muted">${escapeHtml(item.category)} · ${escapeHtml(item.unit)} · cost ${item.cost_per_unit}</p>
         </div>
         <span class="status-chip ${low ? 'is-active' : ''}">${low ? 'ต้องซื้อเพิ่ม' : 'พอใช้'} · ${item.on_hand}</span>
+      </article>
+    `;
+  }).join('');
+}
+
+function renderInventory() {
+  document.getElementById('inventoryList').innerHTML = state.inventory.map((item) => {
+    const low = numberValue(item.on_hand) <= numberValue(item.reorder_level);
+    return `
+      <article class="inventory-row inventory-editor">
+        <div class="inventory-info">
+          <strong>${escapeHtml(item.name)}</strong>
+          <p class="muted">${escapeHtml(item.category)} • ${escapeHtml(item.unit)} • ${escapeHtml(item.supplier || 'no supplier')}</p>
+        </div>
+        <label>
+          คงเหลือ
+          <input type="number" min="0" step="0.01" value="${item.on_hand}" data-inventory-field="on_hand" data-inventory-id="${escapeHtml(item.item_id)}">
+        </label>
+        <label>
+          จุดต้องซื้อ
+          <input type="number" min="0" step="0.01" value="${item.reorder_level}" data-inventory-field="reorder_level" data-inventory-id="${escapeHtml(item.item_id)}">
+        </label>
+        <label>
+          ต้นทุน/หน่วย
+          <input type="number" min="0" step="0.01" value="${item.cost_per_unit}" data-inventory-field="cost_per_unit" data-inventory-id="${escapeHtml(item.item_id)}">
+        </label>
+        <div class="inventory-actions">
+          <span class="status-chip ${low ? 'is-active' : ''}">${low ? 'ต้องซื้อเพิ่ม' : 'พอใช้'} • ${item.on_hand} ${escapeHtml(item.unit)}</span>
+          <button type="button" data-save-inventory="${escapeHtml(item.item_id)}">บันทึกสต็อก</button>
+        </div>
       </article>
     `;
   }).join('');
@@ -684,6 +714,40 @@ async function saveMenuPrice(menuId) {
   }
 }
 
+async function saveInventoryItem(itemId) {
+  const item = state.inventory.find((entry) => entry.item_id === itemId);
+  if (!item) return;
+
+  document.querySelectorAll(`[data-inventory-id="${CSS.escape(itemId)}"]`).forEach((input) => {
+    const field = input.dataset.inventoryField;
+    if (field && ['on_hand', 'reorder_level', 'cost_per_unit'].includes(field)) {
+      item[field] = numberValue(input.value);
+    }
+  });
+  item.last_updated = todayIso();
+
+  state.syncQueue = state.syncQueue.filter((job) => !(job.action === 'upsertInventory' && job.payload?.inventory?.item_id === itemId));
+  if (state.settings.appsScriptUrl) {
+    state.syncQueue.push({
+      id: `${itemId}-inventory-${Date.now()}`,
+      action: 'upsertInventory',
+      payload: { inventory: item },
+      attempts: 0,
+      created_at: nowIso()
+    });
+  }
+
+  saveState();
+  render();
+
+  if (!state.settings.appsScriptUrl) {
+    showToast('บันทึกสต็อกในเครื่องแล้ว ใส่ Apps Script URL เพื่อ sync ไป Sheet', 'error');
+    return;
+  }
+
+  await flushSyncQueue({ successMessage: `บันทึกสต็อก ${item.name} ลง Google Sheet แล้ว` });
+}
+
 function exportOrdersCsv() {
   const headers = ['order_id', 'created_at', 'queue_no', 'status', 'channel', 'customer_name', 'total', 'payment_method', 'payment_status', 'sync_status'];
   const rows = state.orders.map((order) => headers.map((key) => `"${String(order[key] ?? '').replace(/"/g, '""')}"`).join(','));
@@ -747,6 +811,10 @@ function bindEvents() {
   document.getElementById('menuManager').addEventListener('click', (event) => {
     const button = event.target.closest('[data-save-menu]');
     if (button) saveMenuPrice(button.dataset.saveMenu);
+  });
+  document.getElementById('inventoryList').addEventListener('click', (event) => {
+    const button = event.target.closest('[data-save-inventory]');
+    if (button) saveInventoryItem(button.dataset.saveInventory);
   });
   document.getElementById('reloadSheetButton').addEventListener('click', reloadFromSheet);
   document.getElementById('exportCsvButton').addEventListener('click', exportOrdersCsv);

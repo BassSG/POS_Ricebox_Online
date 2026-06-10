@@ -6,11 +6,11 @@ Tablet-first POS for Rice Box Online. The app runs as a static PWA on GitHub Pag
 
 - Front POS: menu tiles, add-ons, cart, queue number, payment method, discount, customer notes, and order save.
 - Food photo menu cards for the four core rice box dishes.
-- Back office: daily sales cards, order status board, delete order, menu price editor, inventory watch, sync queue, and CSV export.
+- Back office: daily sales cards, order status board, delete order, menu price editor, editable inventory control, sync queue, and CSV export.
 - Offline/local mode: orders are saved locally first and queued for sync.
 - Auto sync: saving an order immediately sends it to Google Sheets when the Apps Script URL is configured.
 - Google Sheets backend schema: `Config`, `Menu`, `AddOns`, `Orders`, `OrderItems`, `Payments`, `Inventory`, `DailySummary`, and `SyncLog`.
-- Apps Script backend: `apps-script/Code.gs`, including create order, update status, delete order, menu update, and bootstrap actions.
+- Apps Script backend: `apps-script/Code.gs`, including create order, update status, delete order, menu update, inventory update, and bootstrap actions.
 - PWA install support: `manifest.json`, `sw.js`, and app icon.
 
 ## Google Sheet
@@ -77,6 +77,7 @@ flowchart LR
 - Confirm menu prices in the `Menu` tab.
 - Confirm add-ons in the `AddOns` tab.
 - Confirm opening stock in the `Inventory` tab.
+- Update real stock counts from the POS back office and confirm they sync back to the `Inventory` tab.
 - Deploy Apps Script and paste the Web App URL into the POS settings.
 - Create one test order from the POS.
 - Confirm the order appears in `Orders`, `OrderItems`, `Payments`, and `SyncLog`.
