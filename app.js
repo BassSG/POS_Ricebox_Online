@@ -493,6 +493,13 @@ function updateSyncUi() {
   setSyncBadge(state.syncQueue.length ? `${state.syncQueue.length} pending` : 'Sheet ready', state.syncQueue.length ? 'error' : 'online');
 }
 
+function focusCartOnMobile() {
+  if (!window.matchMedia('(max-width: 720px)').matches) return;
+  window.setTimeout(() => {
+    document.querySelector('.cart-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, 80);
+}
+
 function addMenuToCart(menuId) {
   const menu = state.menu.find((item) => item.menu_id === menuId);
   if (!menu) return;
@@ -509,6 +516,7 @@ function addMenuToCart(menuId) {
   });
   saveState();
   render();
+  focusCartOnMobile();
 }
 
 function updateCartFromInputs() {
