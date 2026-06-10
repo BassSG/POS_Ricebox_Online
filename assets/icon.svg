@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Rice Box Online POS icon">
+  <rect width="512" height="512" rx="112" fill="#21160f"/>
+  <circle cx="256" cy="248" r="164" fill="#fff9ee"/>
+  <path d="M134 238c18 92 67 139 122 139s104-47 122-139H134z" fill="#bd3f2a"/>
+  <path d="M166 214c24-46 59-69 90-69s66 23 90 69H166z" fill="#f1b84b"/>
+  <path d="M179 260h154c-17 49-43 74-77 74s-60-25-77-74z" fill="#fffdf8"/>
+  <path d="M184 176c19-23 43-35 72-35s53 12 72 35" fill="none" stroke="#21160f" stroke-width="18" stroke-linecap="round"/>
+  <text x="256" y="455" text-anchor="middle" font-family="Arial, sans-serif" font-size="64" font-weight="900" fill="#fff9ee">POS</text>
+</svg>

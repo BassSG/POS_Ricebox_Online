@@ -1,0 +1,19 @@
+{
+  "name": "Rice Box Online POS",
+  "short_name": "RiceBox POS",
+  "description": "Tablet POS for Rice Box Online orders, payments, and Google Sheets sync.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#fff9ee",
+  "theme_color": "#21160f",
+  "icons": [
+    {
+      "src": "assets/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

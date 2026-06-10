@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#21160f">
+  <meta name="description" content="Rice Box Online POS for tablet orders, queue, payments, and Google Sheets sync.">
+  <title>Rice Box Online POS</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="assets/icon.svg">
+  <link rel="stylesheet" href="styles.css">
+  <script src="config.js"></script>
+</head>
+<body>
+  <div id="app" class="app-shell">
+    <header class="topbar">
+      <div class="brand-block">
+        <div class="brand-mark">RB</div>
+        <div>
+          <p class="eyeline">Rice Box Online</p>
+          <h1>Tablet POS</h1>
+        </div>
+      </div>
+      <nav class="view-tabs" aria-label="Main views">
+        <button class="view-tab is-active" data-view="pos">หน้าร้าน</button>
+        <button class="view-tab" data-view="backoffice">หลังบ้าน</button>
+        <button class="view-tab" data-view="settings">ตั้งค่า</button>
+      </nav>
+      <div class="topbar-actions">
+        <span id="syncBadge" class="sync-badge">Local mode</span>
+        <button id="installButton" class="ghost-button hidden" type="button">Install</button>
+      </div>
+    </header>
+
+    <main>
+      <section id="posView" class="view is-active" aria-labelledby="pos-title">
+        <div class="pos-grid">
+          <aside class="left-rail">
+            <div class="service-card">
+              <span class="small-label">Today</span>
+              <strong id="todayDate">-</strong>
+              <p id="serviceWindow">ขาย 09:00-15:00 / ซื้อของหลัง 16:30</p>
+            </div>
+
+            <div class="queue-card">
+              <span class="small-label">Queue</span>
+              <strong id="nextQueue">Q001</strong>
+              <button id="newOrderButton" class="secondary-button" type="button">เริ่มบิลใหม่</button>
+            </div>
+
+            <div class="field-stack">
+              <label>
+                ช่องทาง
+                <select id="channelSelect">
+                  <option value="LINE">LINE</option>
+                  <option value="Facebook">Facebook</option>
+                  <option value="Walk-in pickup">Walk-in pickup</option>
+                  <option value="Grab/Platform">Grab/Platform</option>
+                </select>
+              </label>
+              <label>
+                ชื่อลูกค้า
+                <input id="customerName" autocomplete="off" placeholder="เช่น คุณมิ้น">
+              </label>
+              <label>
+                เบอร์/หมายเหตุรับของ
+                <input id="customerPhone" autocomplete="off" placeholder="เบอร์หรือจุดรับ">
+              </label>
+              <label>
+                หมายเหตุทั้งบิล
+                <textarea id="orderNotes" rows="3" placeholder="ไม่เผ็ด แยกน้ำปลา ส่งเวลา..."></textarea>
+              </label>
+            </div>
+          </aside>
+
+          <section class="menu-area" aria-labelledby="pos-title">
+            <div class="section-heading">
+              <div>
+                <p class="eyeline">Order taking</p>
+                <h2 id="pos-title">เลือกเมนูข้าวกล่อง</h2>
+              </div>
+              <div class="status-strip">
+                <span id="openStatus">Open</span>
+                <span id="deviceIdLabel">Device</span>
+              </div>
+            </div>
+
+            <div class="menu-toolbar">
+              <button class="filter-pill is-active" data-category="all" type="button">ทั้งหมด</button>
+              <button class="filter-pill" data-category="rice_box" type="button">Rice box</button>
+              <button class="filter-pill" data-category="favorite" type="button">ขายบ่อย</button>
+            </div>
+
+            <div id="menuGrid" class="menu-grid"></div>
+
+            <div class="quick-add-panel">
+              <div>
+                <span class="small-label">Quick add-ons</span>
+                <strong>กดในตะกร้าเพื่อเพิ่มให้แต่ละกล่อง</strong>
+              </div>
+              <div id="addonPreview" class="addon-preview"></div>
+            </div>
+          </section>
+
+          <aside class="cart-panel">
+            <div class="cart-head">
+              <div>
+                <span class="small-label">Current bill</span>
+                <h2 id="cartQueue">Q001</h2>
+              </div>
+              <button id="clearCartButton" class="ghost-button" type="button">ล้าง</button>
+            </div>
+
+            <div id="cartItems" class="cart-items"></div>
+
+            <div class="payment-box">
+              <div class="totals">
+                <div><span>Subtotal</span><strong id="subtotalValue">0</strong></div>
+                <label class="discount-row">Discount <input id="discountInput" type="number" min="0" step="1" value="0"></label>
+                <div class="grand-total"><span>Total</span><strong id="totalValue">0</strong></div>
+              </div>
+
+              <div class="payment-grid">
+                <label>
+                  วิธีจ่าย
+                  <select id="paymentMethod">
+                    <option value="transfer">โอน</option>
+                    <option value="cash">เงินสด</option>
+                    <option value="platform">แพลตฟอร์ม</option>
+                    <option value="pending">ยังไม่จ่าย</option>
+                  </select>
+                </label>
+                <label>
+                  สถานะเงิน
+                  <select id="paymentStatus">
+                    <option value="paid">จ่ายแล้ว</option>
+                    <option value="pending">รอจ่าย</option>
+                  </select>
+                </label>
+              </div>
+
+              <div class="action-grid">
+                <button id="saveOrderButton" class="primary-button" type="button">บันทึกออเดอร์</button>
+                <button id="syncNowButton" class="secondary-button" type="button">Sync now</button>
+              </div>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <section id="backofficeView" class="view" aria-labelledby="backoffice-title">
+        <div class="backoffice-layout">
+          <div class="section-heading">
+            <div>
+              <p class="eyeline">Back office</p>
+              <h2 id="backoffice-title">ยอดขาย ออเดอร์ และสต็อก</h2>
+            </div>
+            <button id="exportCsvButton" class="secondary-button" type="button">Export CSV</button>
+          </div>
+
+          <div id="summaryCards" class="summary-grid"></div>
+
+          <div class="admin-grid">
+            <section class="panel">
+              <div class="panel-head">
+                <h3>Orders</h3>
+                <select id="orderFilter">
+                  <option value="all">ทั้งหมด</option>
+                  <option value="new">ใหม่</option>
+                  <option value="cooking">กำลังทำ</option>
+                  <option value="ready">พร้อมส่ง</option>
+                  <option value="done">เสร็จแล้ว</option>
+                </select>
+              </div>
+              <div id="ordersTable" class="orders-table"></div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head">
+                <h3>Menu & add-ons</h3>
+                <button id="reloadSheetButton" class="ghost-button" type="button">Reload Sheet</button>
+              </div>
+              <div id="menuManager" class="manager-list"></div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head">
+                <h3>Inventory watch</h3>
+                <span class="small-label">จาก Google Sheet / local cache</span>
+              </div>
+              <div id="inventoryList" class="manager-list"></div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head">
+                <h3>Sync queue</h3>
+                <span id="queueCount" class="small-label">0 pending</span>
+              </div>
+              <div id="syncQueueList" class="manager-list"></div>
+            </section>
+          </div>
+        </div>
+      </section>
+
+      <section id="settingsView" class="view" aria-labelledby="settings-title">
+        <div class="settings-layout">
+          <section class="panel settings-panel">
+            <div class="section-heading">
+              <div>
+                <p class="eyeline">Google Sheets sync</p>
+                <h2 id="settings-title">เชื่อม POS กับ Google Sheet</h2>
+              </div>
+            </div>
+            <div class="field-stack">
+              <label>
+                Google Sheet ID
+                <input id="sheetIdInput" readonly>
+              </label>
+              <label>
+                Apps Script Web App URL
+                <input id="scriptUrlInput" placeholder="https://script.google.com/macros/s/.../exec">
+              </label>
+              <label>
+                App token (ถ้าตั้งใน Apps Script)
+                <input id="appTokenInput" placeholder="optional">
+              </label>
+              <div class="action-grid">
+                <button id="saveSettingsButton" class="primary-button" type="button">บันทึกการตั้งค่า</button>
+                <button id="testSyncButton" class="secondary-button" type="button">ทดสอบ Sync</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <h3>ขั้นตอนเปิดใช้ backend</h3>
+            <ol class="setup-list">
+              <li>เปิด Google Sheet ที่เตรียมไว้ แล้วไปที่ Extensions > Apps Script</li>
+              <li>นำไฟล์ <code>apps-script/Code.gs</code> ใน repo นี้ไปวางแทนโค้ดเดิม</li>
+              <li>กด Deploy > New deployment > Web app</li>
+              <li>ตั้ง Execute as: Me และ Who has access: Anyone with the link</li>
+              <li>คัดลอก Web App URL มาใส่ในช่องด้านซ้าย แล้วกดทดสอบ Sync</li>
+            </ol>
+            <p class="hint">Google ต้องให้เจ้าของ Sheet กด authorize ครั้งแรกเองเพื่อความปลอดภัย หลังจากนั้น POS จะอ่านเมนูและบันทึกออเดอร์ลง Sheet ได้</p>
+          </section>
+        </div>
+      </section>
+    </main>
+
+    <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+  </div>
+
+  <script src="app.js" type="module"></script>
+</body>
+</html>
