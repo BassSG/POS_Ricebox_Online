@@ -324,15 +324,16 @@ textarea:focus {
 }
 
 .menu-card {
-  display: grid;
-  min-height: 190px;
+  position: relative;
+  display: flex;
+  min-height: 286px;
+  overflow: hidden;
+  flex-direction: column;
   border: 1px solid var(--line);
   border-radius: 22px;
-  background:
-    linear-gradient(140deg, rgba(255, 255, 255, 0.86), rgba(255, 249, 238, 0.94)),
-    var(--surface);
+  background: var(--surface);
   box-shadow: var(--shadow-soft);
-  padding: 16px;
+  padding: 0;
   text-align: left;
 }
 
@@ -343,23 +344,60 @@ textarea:focus {
   transform: translateY(-1px);
 }
 
+.menu-photo-wrap {
+  position: relative;
+  display: grid;
+  aspect-ratio: 4 / 3;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--cream);
+}
+
+.menu-photo {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.22s ease;
+}
+
+.menu-card:hover .menu-photo {
+  transform: scale(1.03);
+}
+
 .menu-card .food-icon {
   display: grid;
-  width: 54px;
-  height: 54px;
+  width: 100%;
+  height: 100%;
   place-items: center;
-  border-radius: 17px;
-  background: var(--cream);
   color: var(--chili);
+  font-size: 2rem;
   font-weight: 1000;
 }
 
+.menu-hot-badge {
+  position: absolute;
+  left: 12px;
+  top: 12px;
+  border-radius: 999px;
+  background: rgba(189, 63, 42, 0.95);
+  color: #fff;
+  padding: 7px 11px;
+  font-size: 0.75rem;
+  font-weight: 1000;
+  box-shadow: 0 10px 24px rgba(33, 22, 15, 0.18);
+}
+
+.menu-card-body {
+  display: grid;
+  flex: 1;
+  padding: 15px 16px 16px;
+}
+
 .menu-card strong {
-  margin-top: 12px;
   font-size: 1.26rem;
 }
 
-.menu-card p {
+.menu-card-description {
   margin-top: 7px;
   color: var(--soy);
   font-size: 0.9rem;
@@ -378,6 +416,20 @@ textarea:focus {
   font-size: 1.7rem;
   font-weight: 1000;
   color: var(--chili);
+}
+
+.add-button {
+  display: grid;
+  width: 46px;
+  height: 46px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--chili);
+  color: #fff;
+  font-size: 1.7rem;
+  font-weight: 1000;
+  line-height: 1;
+  box-shadow: 0 14px 26px rgba(189, 63, 42, 0.24);
 }
 
 .quick-add-panel {
@@ -554,6 +606,19 @@ textarea:focus {
   color: var(--ink);
 }
 
+.auto-sync-note {
+  display: grid;
+  min-height: 42px;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 249, 238, 0.78);
+  font-size: 0.82rem;
+  font-weight: 900;
+  text-align: center;
+}
+
 .ghost-button {
   border: 1px solid var(--line);
   background: #fff;
@@ -644,6 +709,12 @@ textarea:focus {
   padding: 0 10px;
   font-size: 0.76rem;
   font-weight: 900;
+}
+
+.status-actions button.is-danger {
+  border-color: rgba(189, 63, 42, 0.24);
+  background: rgba(189, 63, 42, 0.1);
+  color: var(--chili);
 }
 
 .settings-layout {
@@ -760,8 +831,24 @@ code {
     padding: 14px;
   }
 
+  .menu-area {
+    order: 1;
+  }
+
+  .cart-panel {
+    order: 2;
+  }
+
+  .left-rail {
+    order: 3;
+  }
+
   .menu-card {
-    min-height: 164px;
+    min-height: 272px;
+  }
+
+  .menu-photo-wrap {
+    aspect-ratio: 16 / 10;
   }
 
   .order-row,

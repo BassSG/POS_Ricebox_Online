@@ -50,6 +50,13 @@ const DEFAULT_MENU = [
   }
 ];
 
+const MENU_IMAGES_BY_ID = {
+  'kaprao-pork': 'assets/menu-kaprao.jpg',
+  'oyster-pork': 'assets/menu-oyster-pork.jpg',
+  'fried-rice-pork': 'assets/menu-fried-rice-pork.jpg',
+  'garlic-pork': 'assets/menu-garlic-pork.jpg'
+};
+
 const DEFAULT_ADDONS = [
   { addon_id: 'fried-egg', name: 'ไข่ดาว', price: 12, cost_estimate: 5, active: true, sort_order: 1 },
   { addon_id: 'special', name: 'พิเศษ', price: 15, cost_estimate: 8, active: true, sort_order: 2 },
@@ -147,6 +154,7 @@ function normalizeMenu(rows) {
       active: booleanValue(item.active),
       sort_order: numberValue(item.sort_order || index + 1),
       description: item.description || '',
+      image: item.image || item.image_url || MENU_IMAGES_BY_ID[item.menu_id] || '',
       image_hint: item.image_hint || item.name?.slice(0, 2) || 'RB',
       updated_at: item.updated_at || todayIso()
     }))
@@ -256,11 +264,13 @@ function setSyncBadge(text, status = 'local') {
 function render() {
   document.querySelectorAll('.view').forEach((view) => view.classList.toggle('is-active', view.id === `${activeView}View`));
   document.querySelectorAll('.view-tab').forEach((tab) => tab.classList.toggle('is-active', tab.dataset.view === activeView));
-  renderToday();
-  renderMenu();
-  renderCart();
-  renderBackoffice();
-  renderSettings();
+  if (activeView === 'pos') {
+    renderToday();
+    renderMenu();
+    renderCart();
+  }
+  if (activeView === 'backoffice') renderBackoffice();
+  if (activeView === 'settings') renderSettings();
   updateSyncUi();
 }
 
@@ -276,17 +286,28 @@ function renderToday() {
 
 function renderMenu() {
   const menu = state.menu.filter((item) => item.active && (activeCategory === 'all' || item.category === activeCategory || activeCategory === 'favorite'));
-  document.getElementById('menuGrid').innerHTML = menu.map((item) => `
-    <button type="button" class="menu-card" data-menu-id="${escapeHtml(item.menu_id)}">
-      <span class="food-icon">${escapeHtml(item.image_hint || 'RB')}</span>
-      <strong>${escapeHtml(item.name)}</strong>
-      <p>${escapeHtml(item.description)}</p>
-      <span class="menu-card-footer">
-        <span class="price">${baht(item.base_price)}</span>
-        <span class="addon-chip">เพิ่มลงบิล</span>
-      </span>
-    </button>
-  `).join('');
+  document.getElementById('menuGrid').innerHTML = menu.map((item) => {
+    const image = item.image || MENU_IMAGES_BY_ID[item.menu_id] || '';
+    const imageMarkup = image
+      ? `<img class="menu-photo" src="${escapeHtml(image)}" alt="${escapeHtml(item.name)}" loading="eager" decoding="async">`
+      : `<span class="food-icon">${escapeHtml(item.image_hint || 'RB')}</span>`;
+    return `
+      <button type="button" class="menu-card" data-menu-id="${escapeHtml(item.menu_id)}">
+        <span class="menu-photo-wrap">
+          ${imageMarkup}
+          <span class="menu-hot-badge">ขายดี</span>
+        </span>
+        <span class="menu-card-body">
+          <strong>${escapeHtml(item.name)}</strong>
+          <span class="menu-card-description">${escapeHtml(item.description)}</span>
+          <span class="menu-card-footer">
+            <span class="price">${baht(item.base_price)}</span>
+            <span class="add-button" aria-hidden="true">+</span>
+          </span>
+        </span>
+      </button>
+    `;
+  }).join('');
   document.getElementById('addonPreview').innerHTML = state.addons.filter((item) => item.active).map((addon) => `
     <span class="addon-chip">${escapeHtml(addon.name)} +${numberValue(addon.price).toLocaleString('th-TH')}</span>
   `).join('');
@@ -379,6 +400,7 @@ function renderOrders() {
         </div>
         <div class="status-actions">
           ${['new', 'cooking', 'ready', 'done', 'void'].map((status) => `<button type="button" data-order-status="${status}" data-order-id="${order.order_id}" class="${order.status === status ? 'is-active' : ''}">${status}</button>`).join('')}
+          <button type="button" data-delete-order="${order.order_id}" class="is-danger">ลบ</button>
         </div>
       </article>
     `).join('')
@@ -471,7 +493,7 @@ function updateCartFromInputs() {
   renderCart();
 }
 
-function saveOrder() {
+async function saveOrder() {
   updateCartFromInputs();
   if (!state.cart.items.length) {
     showToast('ยังไม่มีรายการอาหารในบิล', 'error');
@@ -494,8 +516,12 @@ function saveOrder() {
   state.cart = freshCart();
   saveState();
   render();
-  showToast(`บันทึก ${order.queue_no} แล้ว`);
-  flushSyncQueue();
+  if (state.settings.appsScriptUrl) {
+    showToast(`บันทึก ${order.queue_no} แล้ว กำลัง sync...`);
+    await flushSyncQueue({ successMessage: `บันทึก ${order.queue_no} ลง Google Sheet แล้ว` });
+  } else {
+    showToast(`บันทึก ${order.queue_no} ในเครื่องแล้ว`);
+  }
 }
 
 function resetCart() {
@@ -514,6 +540,44 @@ function updateOrderStatus(orderId, status) {
   saveState();
   render();
   flushSyncQueue();
+}
+
+async function deleteOrder(orderId) {
+  const index = state.orders.findIndex((entry) => entry.order_id === orderId);
+  if (index === -1) return;
+  const order = state.orders[index];
+  const ok = window.confirm(`ลบออเดอร์ ${order.queue_no || order.order_id} ใช่ไหม? ระบบจะลบในหน้านี้และ Google Sheet เมื่อเชื่อมต่ออยู่`);
+  if (!ok) return;
+
+  const hadPendingCreate = state.syncQueue.some((job) => job.action === 'createOrder' && job.payload?.order?.order_id === orderId);
+  state.orders.splice(index, 1);
+  state.syncQueue = state.syncQueue.filter((job) => {
+    if (job.action === 'createOrder' && job.payload?.order?.order_id === orderId) return false;
+    if (job.action === 'updateOrderStatus' && job.payload?.order_id === orderId) return false;
+    if (job.action === 'deleteOrder' && job.payload?.order_id === orderId) return false;
+    return true;
+  });
+
+  const shouldDeleteRemote = Boolean(state.settings.appsScriptUrl && !hadPendingCreate);
+  if (shouldDeleteRemote) {
+    state.syncQueue.unshift({
+      id: `${orderId}-delete-${Date.now()}`,
+      action: 'deleteOrder',
+      payload: { order_id: orderId },
+      attempts: 0,
+      created_at: nowIso()
+    });
+  }
+
+  saveState();
+  render();
+
+  if (shouldDeleteRemote) {
+    showToast('ลบออเดอร์แล้ว กำลังลบใน Google Sheet...');
+    await flushSyncQueue({ successMessage: 'ลบออเดอร์จาก Google Sheet แล้ว' });
+  } else {
+    showToast(hadPendingCreate ? 'ลบออเดอร์ในเครื่องแล้ว เพราะยังไม่ได้ sync ไป Sheet' : 'ลบออเดอร์ในเครื่องแล้ว');
+  }
 }
 
 async function apiCall(action, payload = {}) {
@@ -540,7 +604,8 @@ async function apiCall(action, payload = {}) {
   return data;
 }
 
-async function flushSyncQueue() {
+async function flushSyncQueue(options = {}) {
+  const { silent = false, successMessage = 'Sync กับ Google Sheet แล้ว' } = options;
   if (!state.settings.appsScriptUrl || !state.syncQueue.length) {
     updateSyncUi();
     return;
@@ -554,6 +619,10 @@ async function flushSyncQueue() {
         const order = state.orders.find((entry) => entry.order_id === job.payload.order.order_id);
         if (order) order.sync_status = 'synced';
       }
+      if (job.action === 'updateOrderStatus') {
+        const order = state.orders.find((entry) => entry.order_id === job.payload.order_id);
+        if (order) order.sync_status = 'synced';
+      }
     } catch (error) {
       remaining.push({ ...job, attempts: (job.attempts || 0) + 1, last_error: error.message });
     }
@@ -561,7 +630,9 @@ async function flushSyncQueue() {
   state.syncQueue = remaining;
   saveState();
   render();
-  showToast(remaining.length ? `ยังมี ${remaining.length} รายการ sync ไม่สำเร็จ` : 'Sync กับ Google Sheet แล้ว', remaining.length ? 'error' : 'default');
+  if (!silent) {
+    showToast(remaining.length ? `ยังมี ${remaining.length} รายการ sync ไม่สำเร็จ` : successMessage, remaining.length ? 'error' : 'default');
+  }
 }
 
 async function reloadFromSheet() {
@@ -666,10 +737,11 @@ function bindEvents() {
   document.getElementById('saveOrderButton').addEventListener('click', saveOrder);
   document.getElementById('clearCartButton').addEventListener('click', resetCart);
   document.getElementById('newOrderButton').addEventListener('click', resetCart);
-  document.getElementById('syncNowButton').addEventListener('click', flushSyncQueue);
   document.getElementById('orderFilter').addEventListener('change', renderOrders);
   document.getElementById('ordersTable').addEventListener('click', (event) => {
+    const deleteButton = event.target.closest('[data-delete-order]');
     const button = event.target.closest('[data-order-status]');
+    if (deleteButton) deleteOrder(deleteButton.dataset.deleteOrder);
     if (button) updateOrderStatus(button.dataset.orderId, button.dataset.orderStatus);
   });
   document.getElementById('menuManager').addEventListener('click', (event) => {
@@ -731,6 +803,11 @@ if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   });
 }
+
+window.addEventListener('online', () => flushSyncQueue({ silent: true }));
+window.setInterval(() => {
+  if (state.settings.appsScriptUrl && state.syncQueue.length) flushSyncQueue({ silent: true });
+}, 30000);
 
 bindEvents();
 render();

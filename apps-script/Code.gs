@@ -56,6 +56,9 @@ function route_(request) {
       case 'updateOrderStatus':
         result = updateOrderStatus_(request.payload, request);
         break;
+      case 'deleteOrder':
+        result = deleteOrder_(request.payload, request);
+        break;
       case 'upsertMenu':
         result = upsertMenu_(request.payload.menu, request);
         break;
@@ -221,6 +224,28 @@ function updateOrderStatus_(payload, request) {
   return { orderId: payload.order_id, status: status };
 }
 
+function deleteOrder_(payload, request) {
+  if (!payload || !payload.order_id) throw new Error('Missing order_id');
+  const orderId = payload.order_id;
+  const deleted = {
+    payments: deleteRowsByKey_('Payments', 'order_id', orderId),
+    orderItems: deleteRowsByKey_('OrderItems', 'order_id', orderId),
+    orders: deleteRowsByKey_('Orders', 'order_id', orderId)
+  };
+
+  logSync_({
+    actor: 'pos',
+    action: 'deleteOrder',
+    status: 'success',
+    message: orderId,
+    payload_json: JSON.stringify({ order_id: orderId, deleted: deleted }),
+    device_id: request.deviceId || '',
+    app_version: request.appVersion || ''
+  });
+
+  return { orderId: orderId, deleted: deleted };
+}
+
 function upsertMenu_(menu, request) {
   if (!menu || !menu.menu_id) throw new Error('Missing menu');
   const sheet = sheet_('Menu');
@@ -292,6 +317,24 @@ function updateOrderItemsStatus_(orderId, status) {
   values.slice(1).forEach((row, index) => {
     if (row[orderCol] === orderId) sheet.getRange(index + 2, statusCol + 1).setValue(status);
   });
+}
+
+function deleteRowsByKey_(sheetName, keyHeader, keyValue) {
+  const sheet = sheet_(sheetName);
+  const values = sheet.getDataRange().getDisplayValues();
+  if (values.length < 2) return 0;
+  const headers = values[0];
+  const keyCol = headers.indexOf(keyHeader);
+  if (keyCol === -1) return 0;
+
+  let deleted = 0;
+  for (let row = values.length - 1; row >= 1; row--) {
+    if (values[row][keyCol] === keyValue) {
+      sheet.deleteRow(row + 1);
+      deleted++;
+    }
+  }
+  return deleted;
 }
 
 function findRowIndex_(sheetName, keyHeader, keyValue) {

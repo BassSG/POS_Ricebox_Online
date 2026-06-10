@@ -1,4 +1,4 @@
-const CACHE_NAME = 'ricebox-pos-v2';
+const CACHE_NAME = 'ricebox-pos-v3';
 const ASSETS = [
   './',
   './index.html',
@@ -9,7 +9,11 @@ const ASSETS = [
   './assets/icon.svg',
   './assets/icon-192.png',
   './assets/icon-512.png',
-  './assets/icon-maskable-512.png'
+  './assets/icon-maskable-512.png',
+  './assets/menu-kaprao.jpg',
+  './assets/menu-oyster-pork.jpg',
+  './assets/menu-fried-rice-pork.jpg',
+  './assets/menu-garlic-pork.jpg'
 ];
 
 self.addEventListener('install', (event) => {
