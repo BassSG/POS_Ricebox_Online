@@ -57,6 +57,22 @@ const MENU_IMAGES_BY_ID = {
   'garlic-pork': 'assets/menu-garlic-pork.jpg'
 };
 
+const PLATFORM_CHANNELS = [
+  { id: 'LineMan', label: 'LineMan', icon: 'assets/channel-lineman.svg', color: '#06c755' },
+  { id: 'GrabFood', label: 'GrabFood', icon: 'assets/channel-grabfood.svg', color: '#00b14f' },
+  { id: 'ShopeeFood', label: 'ShopeeFood', icon: 'assets/channel-shopeefood.svg', color: '#ee4d2d' },
+  { id: 'Foodpanda', label: 'Foodpanda', icon: 'assets/channel-foodpanda.svg', color: '#e21b70' },
+  { id: 'Robinhood', label: 'Robinhood', icon: 'assets/channel-robinhood.svg', color: '#7b2cbf' }
+];
+
+const ORDER_STATUSES = [
+  { id: 'new', label: 'new' },
+  { id: 'cooking', label: 'cooking' },
+  { id: 'ready', label: 'ready' },
+  { id: 'done', label: 'done' },
+  { id: 'void', label: 'void' }
+];
+
 const DEFAULT_ADDONS = [
   { addon_id: 'fried-egg', name: 'ไข่ดาว', price: 12, cost_estimate: 5, active: true, sort_order: 1 },
   { addon_id: 'special', name: 'พิเศษ', price: 15, cost_estimate: 8, active: true, sort_order: 2 },
@@ -131,7 +147,7 @@ function freshCart() {
   return {
     order_id: '',
     queue_no: '',
-    channel: 'LINE',
+    channel: 'LineMan',
     customer_name: '',
     customer_phone: '',
     notes: '',
@@ -211,6 +227,27 @@ function nowIso() {
 
 function baht(value) {
   return `${Math.round(numberValue(value)).toLocaleString('th-TH')} บาท`;
+}
+
+function normalizeChannel(value) {
+  const aliases = {
+    LINE: 'LineMan',
+    Line: 'LineMan',
+    Facebook: 'LineMan',
+    'Walk-in pickup': 'LineMan',
+    'Grab/Platform': 'GrabFood',
+    Grab: 'GrabFood',
+    Shopee: 'ShopeeFood',
+    ShoppeeFood: 'ShopeeFood',
+    FoodPanda: 'Foodpanda'
+  };
+  const normalized = aliases[value] || value || 'LineMan';
+  return PLATFORM_CHANNELS.some((channel) => channel.id === normalized) ? normalized : 'LineMan';
+}
+
+function channelMeta(value) {
+  const channelId = normalizeChannel(value);
+  return PLATFORM_CHANNELS.find((channel) => channel.id === channelId) || PLATFORM_CHANNELS[0];
 }
 
 function queueNo() {
@@ -314,9 +351,23 @@ function renderMenu() {
   document.querySelectorAll('.filter-pill').forEach((button) => button.classList.toggle('is-active', button.dataset.category === activeCategory));
 }
 
+function renderChannelCards() {
+  const container = document.getElementById('channelCards');
+  if (!container) return;
+  const current = normalizeChannel(state.cart.channel);
+  container.innerHTML = PLATFORM_CHANNELS.map((channel) => `
+    <button type="button" class="channel-card ${current === channel.id ? 'is-active' : ''}" data-channel="${channel.id}" style="--channel-color: ${channel.color}">
+      <img src="${channel.icon}" alt="${channel.label}" loading="eager" decoding="async">
+      <span>${channel.label}</span>
+    </button>
+  `).join('');
+}
+
 function renderCart() {
   const cart = state.cart;
+  cart.channel = normalizeChannel(cart.channel);
   document.getElementById('channelSelect').value = cart.channel;
+  renderChannelCards();
   document.getElementById('customerName').value = cart.customer_name;
   document.getElementById('customerPhone').value = cart.customer_phone;
   document.getElementById('orderNotes').value = cart.notes;
@@ -357,7 +408,7 @@ function cartLineHtml(item) {
 
 function renderBackoffice() {
   renderSummary();
-  renderOrders();
+  renderOrdersKitchen();
   renderMenuManager();
   renderInventory();
   renderSyncQueue();
@@ -401,6 +452,68 @@ function renderOrders() {
         <div class="status-actions">
           ${['new', 'cooking', 'ready', 'done', 'void'].map((status) => `<button type="button" data-order-status="${status}" data-order-id="${order.order_id}" class="${order.status === status ? 'is-active' : ''}">${status}</button>`).join('')}
           <button type="button" data-delete-order="${order.order_id}" class="is-danger">ลบ</button>
+        </div>
+      </article>
+    `).join('')
+    : '<div class="empty-state">ยังไม่มีออเดอร์ในตัวกรองนี้</div>';
+}
+
+function channelBadgeHtml(channelValue) {
+  const channel = channelMeta(channelValue);
+  return `
+    <span class="order-channel-badge" style="--channel-color: ${channel.color}">
+      <img src="${channel.icon}" alt="${channel.label}">
+      <span>${channel.label}</span>
+    </span>
+  `;
+}
+
+function orderItemsHtml(order) {
+  const items = Array.isArray(order.items) ? order.items : safeJson(order.items_json, []);
+  if (!items.length) return '<div class="order-items-empty">ไม่มีรายการอาหารในออเดอร์นี้</div>';
+  return `
+    <ul class="order-item-list">
+      ${items.map((item) => {
+        const addons = Array.isArray(item.addons) ? item.addons : [];
+        const addonText = addons.length ? addons.map((addon) => addon.name).join(', ') : '';
+        return `
+          <li>
+            <div class="order-item-main">
+              <strong>${numberValue(item.qty) || 1}x ${escapeHtml(item.menu_name || item.name || item.menu_id || 'เมนู')}</strong>
+              <span>${baht(lineTotal({ ...item, addons }))}</span>
+            </div>
+            ${addonText ? `<p class="order-item-addon">Add-on: ${escapeHtml(addonText)}</p>` : ''}
+            ${item.note ? `<p class="order-item-note">Note: ${escapeHtml(item.note)}</p>` : ''}
+          </li>
+        `;
+      }).join('')}
+    </ul>
+  `;
+}
+
+function renderOrdersKitchen() {
+  const filter = document.getElementById('orderFilter')?.value || 'all';
+  const rows = state.orders
+    .filter((order) => filter === 'all' || order.status === filter)
+    .slice(0, 60);
+  document.getElementById('ordersTable').innerHTML = rows.length
+    ? rows.map((order) => `
+      <article class="order-row kitchen-order status-${escapeHtml(order.status || 'new')}">
+        <div class="order-meta">
+          <div class="order-title-line">
+            <strong>${escapeHtml(order.queue_no)} · ${escapeHtml(order.customer_name || 'ไม่ระบุชื่อลูกค้า')}</strong>
+            ${channelBadgeHtml(order.channel)}
+          </div>
+          <span>${new Date(order.created_at).toLocaleString('th-TH')} · ${baht(order.total)} · ${escapeHtml(order.payment_method)} · ${escapeHtml(order.sync_status || 'local')}</span>
+          ${order.customer_phone ? `<span>รับ/ติดต่อ: ${escapeHtml(order.customer_phone)}</span>` : ''}
+        </div>
+        <div class="status-actions order-status-actions">
+          ${ORDER_STATUSES.map((status) => `<button type="button" data-order-status="${status.id}" data-order-id="${order.order_id}" class="${order.status === status.id ? 'is-active' : ''} status-${status.id}">${status.label}</button>`).join('')}
+          <button type="button" data-delete-order="${order.order_id}" class="is-danger">ลบ</button>
+        </div>
+        <div class="order-kitchen-detail">
+          ${orderItemsHtml(order)}
+          ${order.notes ? `<div class="order-note-block"><strong>หมายเหตุทั้งบิล</strong><p>${escapeHtml(order.notes)}</p></div>` : ''}
         </div>
       </article>
     `).join('')
@@ -520,7 +633,7 @@ function addMenuToCart(menuId) {
 }
 
 function updateCartFromInputs() {
-  state.cart.channel = document.getElementById('channelSelect').value;
+  state.cart.channel = normalizeChannel(document.getElementById('channelSelect').value);
   state.cart.customer_name = document.getElementById('customerName').value.trim();
   state.cart.customer_phone = document.getElementById('customerPhone').value.trim();
   state.cart.notes = document.getElementById('orderNotes').value.trim();
@@ -786,6 +899,14 @@ function bindEvents() {
     const card = event.target.closest('[data-menu-id]');
     if (card) addMenuToCart(card.dataset.menuId);
   });
+  document.getElementById('channelCards').addEventListener('click', (event) => {
+    const button = event.target.closest('[data-channel]');
+    if (!button) return;
+    state.cart.channel = normalizeChannel(button.dataset.channel);
+    document.getElementById('channelSelect').value = state.cart.channel;
+    saveState();
+    renderCart();
+  });
   ['channelSelect', 'customerName', 'customerPhone', 'orderNotes', 'discountInput', 'paymentMethod', 'paymentStatus'].forEach((id) => {
     document.getElementById(id).addEventListener('input', updateCartFromInputs);
   });
@@ -809,7 +930,7 @@ function bindEvents() {
   document.getElementById('saveOrderButton').addEventListener('click', saveOrder);
   document.getElementById('clearCartButton').addEventListener('click', resetCart);
   document.getElementById('newOrderButton').addEventListener('click', resetCart);
-  document.getElementById('orderFilter').addEventListener('change', renderOrders);
+  document.getElementById('orderFilter').addEventListener('change', renderOrdersKitchen);
   document.getElementById('ordersTable').addEventListener('click', (event) => {
     const deleteButton = event.target.closest('[data-delete-order]');
     const button = event.target.closest('[data-order-status]');

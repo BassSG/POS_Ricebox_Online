@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 72" role="img" aria-label="Robinhood">
+  <rect width="180" height="72" rx="18" fill="#7b2cbf"/>
+  <circle cx="36" cy="36" r="20" fill="#fff"/>
+  <path d="M24 43c8-14 18-20 30-20-5 5-8 11-9 20H24Z" fill="#7b2cbf"/>
+  <path d="M31 42c6-8 12-12 18-14" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round"/>
+  <text x="62" y="34" fill="#fff" font-family="Arial, sans-serif" font-size="18" font-weight="900">Robin</text>
+  <text x="62" y="55" fill="#fff" font-family="Arial, sans-serif" font-size="18" font-weight="900">hood</text>
+</svg>

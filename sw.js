@@ -1,4 +1,4 @@
-const CACHE_NAME = 'ricebox-pos-v4';
+const CACHE_NAME = 'ricebox-pos-v5';
 const ASSETS = [
   './',
   './index.html',
@@ -9,6 +9,11 @@ const ASSETS = [
   './assets/icon-192.png',
   './assets/icon-512.png',
   './assets/icon-maskable-512.png',
+  './assets/channel-lineman.svg',
+  './assets/channel-grabfood.svg',
+  './assets/channel-shopeefood.svg',
+  './assets/channel-foodpanda.svg',
+  './assets/channel-robinhood.svg',
   './assets/menu-kaprao.jpg',
   './assets/menu-oyster-pork.jpg',
   './assets/menu-fried-rice-pork.jpg',

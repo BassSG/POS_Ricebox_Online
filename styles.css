@@ -262,6 +262,12 @@ label {
   font-weight: 900;
 }
 
+.field-label {
+  color: var(--soy);
+  font-size: 0.82rem;
+  font-weight: 900;
+}
+
 input,
 select,
 textarea {
@@ -279,6 +285,50 @@ textarea {
 textarea {
   min-height: 84px;
   resize: vertical;
+}
+
+.channel-select-native {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.channel-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.channel-card {
+  display: grid;
+  min-height: 78px;
+  border: 2px solid transparent;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: inset 0 0 0 1px var(--line);
+  padding: 7px;
+  text-align: left;
+}
+
+.channel-card img {
+  width: 100%;
+  height: 44px;
+  border-radius: 12px;
+  object-fit: cover;
+}
+
+.channel-card span {
+  color: var(--ink);
+  font-size: 0.76rem;
+  font-weight: 1000;
+}
+
+.channel-card.is-active {
+  border-color: var(--channel-color);
+  background: color-mix(in srgb, var(--channel-color) 10%, #fff);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--channel-color) 18%, transparent), var(--shadow-soft);
 }
 
 input:focus,
@@ -682,6 +732,140 @@ textarea:focus {
   align-items: flex-start;
 }
 
+.kitchen-order {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 13px;
+  border-left: 7px solid var(--line);
+}
+
+.kitchen-order.status-new {
+  border-left-color: var(--blue);
+}
+
+.kitchen-order.status-cooking {
+  border-left-color: var(--wok);
+}
+
+.kitchen-order.status-ready {
+  border-left-color: var(--leaf);
+}
+
+.kitchen-order.status-done {
+  border-left-color: var(--soy);
+}
+
+.kitchen-order.status-void {
+  opacity: 0.72;
+  border-left-color: var(--chili);
+}
+
+.order-title-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.order-channel-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid color-mix(in srgb, var(--channel-color) 40%, var(--line));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--channel-color) 10%, #fff);
+  color: var(--ink);
+  padding: 4px 9px 4px 5px;
+  font-size: 0.76rem;
+  font-weight: 1000;
+}
+
+.order-channel-badge img {
+  width: 42px;
+  height: 22px;
+  border-radius: 999px;
+  object-fit: cover;
+}
+
+.order-status-actions {
+  align-content: start;
+  min-width: 220px;
+}
+
+.status-actions button.is-active {
+  border-color: transparent;
+  color: #fff;
+  box-shadow: 0 10px 18px rgba(33, 22, 15, 0.14);
+}
+
+.status-actions button.is-active.status-new {
+  background: var(--blue);
+}
+
+.status-actions button.is-active.status-cooking {
+  background: var(--wok);
+  color: var(--ink);
+}
+
+.status-actions button.is-active.status-ready {
+  background: var(--leaf);
+}
+
+.status-actions button.is-active.status-done {
+  background: var(--soy);
+}
+
+.status-actions button.is-active.status-void {
+  background: var(--chili);
+}
+
+.order-kitchen-detail {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 10px;
+  border-radius: 14px;
+  background: rgba(244, 234, 216, 0.5);
+  padding: 10px;
+}
+
+.order-item-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.order-item-list li {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fff;
+  padding: 10px;
+}
+
+.order-item-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.order-item-addon,
+.order-item-note,
+.order-note-block p {
+  margin-top: 6px;
+  color: var(--soy);
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+
+.order-note-block {
+  border: 1px dashed rgba(189, 63, 42, 0.35);
+  border-radius: 14px;
+  background: rgba(189, 63, 42, 0.08);
+  padding: 10px;
+}
+
 .inventory-editor {
   display: grid;
   grid-template-columns: minmax(170px, 1.2fr) repeat(3, minmax(92px, 0.75fr)) minmax(155px, 0.9fr);
@@ -896,6 +1080,15 @@ code {
 
   .inventory-editor {
     grid-template-columns: 1fr;
+  }
+
+  .kitchen-order {
+    grid-template-columns: 1fr;
+  }
+
+  .order-status-actions {
+    min-width: 0;
+    justify-content: flex-start;
   }
 
   .status-actions {

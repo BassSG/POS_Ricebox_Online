@@ -4,9 +4,9 @@ Tablet-first POS for Rice Box Online. The app runs as a static PWA on GitHub Pag
 
 ## What Is Included
 
-- Front POS: menu tiles, add-ons, cart, queue number, payment method, discount, customer notes, and order save.
+- Front POS: platform image selector, menu tiles, add-ons, cart, queue number, payment method, discount, customer notes, and order save.
 - Food photo menu cards for the four core rice box dishes.
-- Back office: daily sales cards, order status board, delete order, menu price editor, editable inventory control, sync queue, and CSV export.
+- Back office: kitchen-ready order cards with platform badge, item details, add-ons, notes, colored status controls, delete order, menu price editor, editable inventory control, sync queue, and CSV export.
 - Offline/local mode: orders are saved locally first and queued for sync.
 - Auto sync: saving an order immediately sends it to Google Sheets when the Apps Script URL is configured.
 - Google Sheets backend schema: `Config`, `Menu`, `AddOns`, `Orders`, `OrderItems`, `Payments`, `Inventory`, `DailySummary`, and `SyncLog`.

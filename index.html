@@ -52,11 +52,13 @@
             <div class="field-stack">
               <label>
                 ช่องทาง
-                <select id="channelSelect">
-                  <option value="LINE">LINE</option>
-                  <option value="Facebook">Facebook</option>
-                  <option value="Walk-in pickup">Walk-in pickup</option>
-                  <option value="Grab/Platform">Grab/Platform</option>
+                <div id="channelCards" class="channel-grid" aria-label="Order channel"></div>
+                <select id="channelSelect" class="channel-select-native" aria-label="ช่องทาง">
+                  <option value="LineMan">LineMan</option>
+                  <option value="GrabFood">GrabFood</option>
+                  <option value="ShopeeFood">ShopeeFood</option>
+                  <option value="Foodpanda">Foodpanda</option>
+                  <option value="Robinhood">Robinhood</option>
                 </select>
               </label>
               <label>

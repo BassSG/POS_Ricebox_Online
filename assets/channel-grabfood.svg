@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 72" role="img" aria-label="GrabFood">
+  <rect width="180" height="72" rx="18" fill="#00b14f"/>
+  <circle cx="36" cy="36" r="20" fill="#fff"/>
+  <path d="M24 43h25l-3 7H27l-3-7Zm5-14h14l7 11H22l7-11Zm2-7h10l2 5H29l2-5Z" fill="#00b14f"/>
+  <text x="62" y="33" fill="#fff" font-family="Arial, sans-serif" font-size="18" font-weight="900">Grab</text>
+  <text x="62" y="54" fill="#fff" font-family="Arial, sans-serif" font-size="18" font-weight="900">Food</text>
+</svg>
