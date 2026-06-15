@@ -96,6 +96,12 @@ const state = loadState();
 let activeView = 'pos';
 let activeCategory = 'all';
 let deferredInstallPrompt = null;
+let isFlushingSync = false;
+let isPollingSheet = false;
+let newOrderAlertOrders = [];
+
+const UI_CLOCK_INTERVAL_MS = 30000;
+const SHEET_POLL_INTERVAL_MS = 20000;
 
 function loadState() {
   const saved = readJson(STORAGE_KEY, {});
@@ -267,7 +273,7 @@ function normalizeOrderItemForTotals(item) {
 }
 
 function activeOrders(orders = state.orders) {
-  return orders.filter((order) => (order.status || 'new') !== 'void');
+  return orders.filter((order) => normalizeOrderStatus(order.status) !== 'void');
 }
 
 function businessDateKey(date = new Date()) {
@@ -341,6 +347,44 @@ function paymentLabel(value) {
     pending: 'ยังไม่จ่าย'
   };
   return labels[value] || value || 'ไม่ระบุ';
+}
+
+function normalizeOrderStatus(value) {
+  const status = String(value || 'new').trim().toLowerCase();
+  return ORDER_STATUSES.some((entry) => entry.id === status) ? status : 'new';
+}
+
+function dateValue(value) {
+  const date = value instanceof Date ? value : new Date(value || 0);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function minutesBetween(from, to = new Date()) {
+  const start = dateValue(from);
+  const end = dateValue(to);
+  if (!start || !end) return 0;
+  return Math.max(0, Math.floor((end.getTime() - start.getTime()) / 60000));
+}
+
+function minuteLabel(minutes) {
+  return `${Math.max(0, minutes)} นาที`;
+}
+
+function orderAgeLabel(order) {
+  const status = normalizeOrderStatus(order.status);
+  if (status === 'done') {
+    const doneAt = order.completed_at || order.updated_at || order.created_at;
+    return `เสร็จแล้ว ${minuteLabel(minutesBetween(doneAt))}`;
+  }
+  if (status === 'void') return 'ยกเลิกแล้ว';
+  return `รอ ${minuteLabel(minutesBetween(order.created_at))}`;
+}
+
+function orderWorkTimeLabel(order) {
+  const status = normalizeOrderStatus(order.status);
+  if (status !== 'done') return '';
+  const doneAt = order.completed_at || order.updated_at || new Date();
+  return `ใช้เวลา ${minuteLabel(minutesBetween(order.created_at, doneAt))}`;
 }
 
 function groupOrdersBy(orders, keyFn) {
@@ -766,11 +810,16 @@ function kitchenVisibleStatuses(filter) {
 }
 
 function sortKitchenOrders(orders) {
-  return [...orders].sort((a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0));
+  return [...orders].sort((a, b) => {
+    const aTime = dateValue(a.created_at)?.getTime() || 0;
+    const bTime = dateValue(b.created_at)?.getTime() || 0;
+    if (aTime !== bTime) return aTime - bTime;
+    return String(a.queue_no || '').localeCompare(String(b.queue_no || ''), 'th');
+  });
 }
 
 function kitchenOrdersByStatus(status) {
-  return sortKitchenOrders(state.orders.filter((order) => (order.status || 'new') === status));
+  return sortKitchenOrders(state.orders.filter((order) => normalizeOrderStatus(order.status) === status));
 }
 
 function orderTimeLabel(order) {
@@ -787,8 +836,8 @@ function renderKitchenQueueSummary() {
     result[status.id] = kitchenOrdersByStatus(status.id).length;
     return result;
   }, {});
-  const focusOrders = sortKitchenOrders(state.orders.filter((order) => ['new', 'cooking'].includes(order.status || 'new'))).slice(0, 8);
-  const doneToday = state.orders.filter((order) => (order.status || 'new') === 'done' && orderDateKey(order) === businessDateKey()).length;
+  const focusOrders = sortKitchenOrders(state.orders.filter((order) => ['new', 'cooking'].includes(normalizeOrderStatus(order.status)))).slice(0, 8);
+  const doneToday = state.orders.filter((order) => normalizeOrderStatus(order.status) === 'done' && orderDateKey(order) === businessDateKey()).length;
   target.innerHTML = `
     <div class="kitchen-stat-strip">
       ${['new', 'cooking', 'ready', 'done'].map((status) => {
@@ -872,11 +921,12 @@ function kitchenOrderCardHtmlLegacy(order) {
 }
 
 function kitchenOrderCardHtml(order) {
-  const status = order.status || 'new';
+  const status = normalizeOrderStatus(order.status);
   const meta = kitchenStatusMeta(status);
   const nextAction = kitchenNextAction(status);
   const customer = order.customer_name || 'ไม่ระบุชื่อลูกค้า';
   const total = baht(orderSales(order));
+  const workTime = orderWorkTimeLabel(order);
   return `
     <article class="order-row kitchen-order status-${escapeHtml(status)}">
       <div class="kitchen-order-top">
@@ -893,6 +943,7 @@ function kitchenOrderCardHtml(order) {
       </div>
 
       <div class="kitchen-card-actions">
+        <div class="order-age ${status === 'done' ? 'is-done' : ''}">${escapeHtml(orderAgeLabel(order))}${workTime ? ` · ${escapeHtml(workTime)}` : ''}</div>
         ${nextAction ? `<button type="button" class="next-action-button status-${nextAction.status}" data-order-status="${nextAction.status}" data-order-id="${escapeHtml(order.order_id)}">${nextAction.label}</button>` : `<span class="next-action-done">${meta.hint}</span>`}
         <div class="status-actions order-status-actions">
           ${ORDER_STATUSES.map((entry) => `<button type="button" data-order-status="${entry.id}" data-order-id="${escapeHtml(order.order_id)}" class="${status === entry.id ? 'is-active' : ''} status-${entry.id}">${entry.label}</button>`).join('')}
@@ -1131,10 +1182,18 @@ function resetCart() {
 function updateOrderStatus(orderId, status) {
   const order = state.orders.find((entry) => entry.order_id === orderId);
   if (!order) return;
-  order.status = status;
-  order.updated_at = nowIso();
+  const nextStatus = normalizeOrderStatus(status);
+  const updatedAt = nowIso();
+  order.status = nextStatus;
+  order.updated_at = updatedAt;
+  if (nextStatus === 'done') {
+    order.completed_at = updatedAt;
+  } else {
+    delete order.completed_at;
+  }
   order.sync_status = state.settings.appsScriptUrl ? 'pending' : 'local';
-  state.syncQueue.push({ id: `${orderId}-${status}-${Date.now()}`, action: 'updateOrderStatus', payload: { order_id: orderId, status, updated_at: order.updated_at }, attempts: 0, created_at: nowIso() });
+  state.syncQueue = state.syncQueue.filter((job) => !(job.action === 'updateOrderStatus' && job.payload?.order_id === orderId));
+  state.syncQueue.push({ id: `${orderId}-${nextStatus}-${Date.now()}`, action: 'updateOrderStatus', payload: { order_id: orderId, status: nextStatus, updated_at: updatedAt }, attempts: 0, created_at: updatedAt });
   saveState();
   render();
   flushSyncQueue();
@@ -1204,10 +1263,12 @@ async function apiCall(action, payload = {}) {
 
 async function flushSyncQueue(options = {}) {
   const { silent = false, successMessage = 'Sync กับ Google Sheet แล้ว' } = options;
+  if (isFlushingSync) return;
   if (!state.settings.appsScriptUrl || !state.syncQueue.length) {
     updateSyncUi();
     return;
   }
+  isFlushingSync = true;
   setSyncBadge('Syncing...', 'online');
   const remaining = [];
   for (const job of state.syncQueue) {
@@ -1231,25 +1292,74 @@ async function flushSyncQueue(options = {}) {
   if (!silent) {
     showToast(remaining.length ? `ยังมี ${remaining.length} รายการ sync ไม่สำเร็จ` : successMessage, remaining.length ? 'error' : 'default');
   }
+  isFlushingSync = false;
 }
 
-async function reloadFromSheet() {
+function hasPendingOrderMutation(orderId) {
+  return state.syncQueue.some((job) => (
+    (job.action === 'createOrder' && job.payload?.order?.order_id === orderId) ||
+    (job.action === 'updateOrderStatus' && job.payload?.order_id === orderId) ||
+    (job.action === 'deleteOrder' && job.payload?.order_id === orderId)
+  ));
+}
+
+function normalizeSheetOrder(order) {
+  return {
+    ...order,
+    status: normalizeOrderStatus(order.status),
+    items: safeJson(order.items_json, []),
+    sync_status: 'synced'
+  };
+}
+
+function remoteOrderIsNewer(remote, local) {
+  const remoteTime = dateValue(remote.updated_at || remote.created_at)?.getTime() || 0;
+  const localTime = dateValue(local.updated_at || local.created_at)?.getTime() || 0;
+  return remoteTime >= localTime;
+}
+
+function mergeOrdersFromSheet(orders) {
+  const newOrders = [];
+  const known = new Map(state.orders.map((order) => [order.order_id, order]));
+  orders.forEach((rawOrder) => {
+    if (!rawOrder?.order_id) return;
+    const remote = normalizeSheetOrder(rawOrder);
+    const local = known.get(remote.order_id);
+    if (!local) {
+      state.orders.push(remote);
+      newOrders.push(remote);
+      return;
+    }
+    if (hasPendingOrderMutation(remote.order_id)) return;
+    if (!remoteOrderIsNewer(remote, local)) return;
+    Object.assign(local, {
+      ...remote,
+      items: remote.items.length ? remote.items : orderItems(local),
+      sync_status: 'synced'
+    });
+  });
+  state.orders = sortKitchenOrders(state.orders).reverse();
+  return newOrders;
+}
+
+async function reloadFromSheet(options = {}) {
+  const { silent = false, notifyNew = false } = options;
   try {
+    const knownBefore = new Set(state.orders.map((order) => order.order_id));
     const data = await apiCall('bootstrap', {});
     if (Array.isArray(data.menu) && data.menu.length) state.menu = normalizeMenu(data.menu);
     if (Array.isArray(data.addOns) && data.addOns.length) state.addons = normalizeAddons(data.addOns);
     if (Array.isArray(data.inventory) && data.inventory.length) state.inventory = normalizeInventory(data.inventory);
+    let newOrders = [];
     if (Array.isArray(data.orders)) {
-      const known = new Map(state.orders.map((order) => [order.order_id, order]));
-      data.orders.forEach((order) => {
-        if (!known.has(order.order_id)) state.orders.push({ ...order, items: safeJson(order.items_json, []), sync_status: 'synced' });
-      });
+      newOrders = mergeOrdersFromSheet(data.orders).filter((order) => !knownBefore.has(order.order_id) && normalizeOrderStatus(order.status) === 'new');
     }
     saveState();
     render();
-    showToast('โหลดข้อมูลจาก Sheet แล้ว');
+    if (notifyNew && newOrders.length) showNewOrderAlert(newOrders);
+    if (!silent) showToast('โหลดข้อมูลจาก Sheet แล้ว');
   } catch (error) {
-    showToast(error.message, 'error');
+    if (!silent) showToast(error.message, 'error');
     updateSyncUi();
   }
 }
@@ -1329,6 +1439,77 @@ function exportOrdersCsv() {
   URL.revokeObjectURL(url);
 }
 
+function playNewOrderSound() {
+  try {
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContext) return;
+    const context = playNewOrderSound.context || new AudioContext();
+    playNewOrderSound.context = context;
+    if (context.state === 'suspended') context.resume().catch(() => {});
+    [0, 0.18, 0.36].forEach((offset) => {
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      oscillator.type = 'sine';
+      oscillator.frequency.setValueAtTime(880, context.currentTime + offset);
+      gain.gain.setValueAtTime(0.001, context.currentTime + offset);
+      gain.gain.exponentialRampToValueAtTime(0.16, context.currentTime + offset + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, context.currentTime + offset + 0.16);
+      oscillator.connect(gain).connect(context.destination);
+      oscillator.start(context.currentTime + offset);
+      oscillator.stop(context.currentTime + offset + 0.18);
+    });
+  } catch {
+    // Sound is best-effort because iOS may require a prior user gesture.
+  }
+  if (navigator.vibrate) navigator.vibrate([160, 80, 160]);
+}
+
+function showNewOrderAlert(orders) {
+  newOrderAlertOrders = [...orders, ...newOrderAlertOrders]
+    .filter((order, index, list) => list.findIndex((entry) => entry.order_id === order.order_id) === index)
+    .slice(0, 8);
+  document.getElementById('newOrderAlertTitle').textContent = `มีออเดอร์ใหม่ ${orders.length} รายการ`;
+  document.getElementById('newOrderAlertText').textContent = 'ตรวจคิว NEW แล้วเริ่มทำตามลำดับเวลาที่เข้ามาก่อน';
+  document.getElementById('newOrderAlertList').innerHTML = newOrderAlertOrders.map((order) => `
+    <article>
+      <strong>${escapeHtml(order.queue_no || '-')}</strong>
+      <span>${escapeHtml(orderTimeLabel(order))} · ${escapeHtml(channelMeta(order.channel).label)} · ${escapeHtml(orderAgeLabel(order))}</span>
+    </article>
+  `).join('');
+  document.getElementById('newOrderAlertModal').classList.remove('hidden');
+  playNewOrderSound();
+}
+
+function hideNewOrderAlert() {
+  document.getElementById('newOrderAlertModal').classList.add('hidden');
+}
+
+function viewNewOrdersFromAlert() {
+  hideNewOrderAlert();
+  activeView = 'backoffice';
+  render();
+  document.getElementById('orderFilter').value = 'new';
+  renderOrdersBoard();
+  document.querySelector('.kitchen-orders-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+async function pollSheetForUpdates() {
+  if (!state.settings.appsScriptUrl || isPollingSheet) return;
+  isPollingSheet = true;
+  try {
+    if (state.syncQueue.length) await flushSyncQueue({ silent: true });
+    await reloadFromSheet({ silent: true, notifyNew: true });
+  } finally {
+    isPollingSheet = false;
+  }
+}
+
+function refreshKitchenClock() {
+  if (activeView !== 'backoffice') return;
+  renderKitchenQueueSummary();
+  renderOrdersBoard();
+}
+
 function bindEvents() {
   document.querySelectorAll('.view-tab').forEach((button) => {
     button.addEventListener('click', () => {
@@ -1406,8 +1587,16 @@ function bindEvents() {
   document.getElementById('salesReportModal').addEventListener('click', (event) => {
     if (event.target.id === 'salesReportModal') closeSalesReport();
   });
+  document.getElementById('viewNewOrdersButton').addEventListener('click', viewNewOrdersFromAlert);
+  document.getElementById('dismissNewOrderAlertButton').addEventListener('click', hideNewOrderAlert);
+  document.getElementById('newOrderAlertModal').addEventListener('click', (event) => {
+    if (event.target.id === 'newOrderAlertModal') hideNewOrderAlert();
+  });
   document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') closeSalesReport();
+    if (event.key === 'Escape') {
+      closeSalesReport();
+      hideNewOrderAlert();
+    }
   });
   document.getElementById('exportCsvButton').addEventListener('click', exportOrdersCsv);
   document.getElementById('saveSettingsButton').addEventListener('click', () => {
@@ -1464,10 +1653,18 @@ if ('serviceWorker' in navigator) {
   });
 }
 
-window.addEventListener('online', () => flushSyncQueue({ silent: true }));
+window.addEventListener('online', () => {
+  flushSyncQueue({ silent: true });
+  pollSheetForUpdates();
+});
 window.setInterval(() => {
   if (state.settings.appsScriptUrl && state.syncQueue.length) flushSyncQueue({ silent: true });
 }, 30000);
+window.setInterval(refreshKitchenClock, UI_CLOCK_INTERVAL_MS);
+window.setInterval(pollSheetForUpdates, SHEET_POLL_INTERVAL_MS);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) pollSheetForUpdates();
+});
 
 bindEvents();
 render();

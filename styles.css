@@ -1154,6 +1154,23 @@ textarea:focus {
   font-weight: 800;
 }
 
+.kitchen-order-identity .order-age,
+.kitchen-card-actions .order-age {
+  width: fit-content;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--wok) 18%, #fff);
+  color: #7a4c00;
+  padding: 5px 9px;
+  font-size: 0.78rem;
+  font-weight: 1000;
+}
+
+.kitchen-order-identity .order-age.is-done,
+.kitchen-card-actions .order-age.is-done {
+  background: color-mix(in srgb, var(--leaf) 13%, #fff);
+  color: var(--leaf);
+}
+
 .status-pill {
   border-radius: 999px;
   background: var(--cream);
@@ -1446,6 +1463,87 @@ code {
     var(--surface);
   box-shadow: 0 28px 80px rgba(33, 22, 15, 0.28);
   padding: 20px;
+}
+
+.new-order-modal {
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+  width: min(480px, 100%);
+  border: 1px solid rgba(234, 220, 199, 0.9);
+  border-radius: 26px;
+  background:
+    radial-gradient(circle at top, rgba(241, 184, 75, 0.26), transparent 18rem),
+    var(--surface);
+  box-shadow: 0 28px 80px rgba(33, 22, 15, 0.3);
+  padding: 22px;
+  text-align: center;
+}
+
+.new-order-pulse {
+  display: grid;
+  width: 72px;
+  height: 72px;
+  place-items: center;
+  border-radius: 24px;
+  background: linear-gradient(135deg, var(--chili), var(--wok));
+  color: #fff;
+  font-size: 2.3rem;
+  font-weight: 1000;
+  box-shadow: 0 18px 36px rgba(189, 63, 42, 0.28);
+}
+
+.new-order-modal h2 {
+  margin: 4px 0 6px;
+  font-size: clamp(1.45rem, 4vw, 2rem);
+}
+
+.new-order-modal p {
+  margin: 0;
+  color: var(--soy);
+  font-weight: 900;
+}
+
+.new-order-list {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.new-order-list article {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(255, 253, 248, 0.88);
+  padding: 10px;
+  text-align: left;
+}
+
+.new-order-list strong {
+  border-radius: 14px;
+  background: var(--ink);
+  color: var(--paper);
+  padding: 8px 10px;
+}
+
+.new-order-list span {
+  min-width: 0;
+  color: var(--soy);
+  font-size: 0.86rem;
+  font-weight: 900;
+  overflow-wrap: anywhere;
+}
+
+.new-order-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  width: 100%;
 }
 
 .modal-head {
@@ -1882,6 +1980,15 @@ code {
     max-height: calc(100vh - 20px);
     border-radius: 18px;
     padding: 14px;
+  }
+
+  .new-order-modal {
+    border-radius: 22px;
+    padding: 18px;
+  }
+
+  .new-order-actions {
+    grid-template-columns: 1fr;
   }
 
   .modal-head {
