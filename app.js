@@ -1,6 +1,7 @@
 const CONFIG = window.POS_CONFIG || {};
 const STORAGE_KEY = 'riceBoxPosStateV1';
 const DEVICE_KEY = 'riceBoxPosDeviceId';
+const SOUND_ENABLED_KEY = 'riceBoxPosSoundEnabled';
 const APP_VERSION = CONFIG.appVersion || '1.0.0';
 const BUSINESS_TIME_ZONE = 'Asia/Bangkok';
 
@@ -99,9 +100,16 @@ let deferredInstallPrompt = null;
 let isFlushingSync = false;
 let isPollingSheet = false;
 let newOrderAlertOrders = [];
+let notificationAudioContext = null;
+let notificationAudioElement = null;
+let notificationBeepUrl = '';
+let notificationSoundEnabled = localStorage.getItem(SOUND_ENABLED_KEY) === 'true';
+let notificationSoundUnlocked = false;
+let lastNotificationSoundAt = 0;
 
 const UI_CLOCK_INTERVAL_MS = 30000;
 const SHEET_POLL_INTERVAL_MS = 20000;
+const SOUND_COOLDOWN_MS = 900;
 
 function loadState() {
   const saved = readJson(STORAGE_KEY, {});
@@ -444,6 +452,259 @@ function setSyncBadge(text, status = 'local') {
   badge.classList.toggle('is-error', status === 'error');
 }
 
+function audioContextClass() {
+  return window.AudioContext || window.webkitAudioContext || null;
+}
+
+function getNotificationAudioContext() {
+  const AudioContext = audioContextClass();
+  if (!AudioContext) return null;
+  if (!notificationAudioContext) notificationAudioContext = new AudioContext();
+  return notificationAudioContext;
+}
+
+function notificationBeepDataUrl() {
+  if (notificationBeepUrl) return notificationBeepUrl;
+  const sampleRate = 22050;
+  const duration = 0.64;
+  const notes = [
+    { start: 0, end: 0.14, frequency: 880 },
+    { start: 0.2, end: 0.34, frequency: 1046 },
+    { start: 0.4, end: 0.56, frequency: 880 }
+  ];
+  const sampleCount = Math.floor(sampleRate * duration);
+  const dataSize = sampleCount * 2;
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+  const writeString = (offset, value) => {
+    for (let index = 0; index < value.length; index += 1) {
+      view.setUint8(offset + index, value.charCodeAt(index));
+    }
+  };
+
+  writeString(0, 'RIFF');
+  view.setUint32(4, 36 + dataSize, true);
+  writeString(8, 'WAVE');
+  writeString(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeString(36, 'data');
+  view.setUint32(40, dataSize, true);
+
+  for (let index = 0; index < sampleCount; index += 1) {
+    const time = index / sampleRate;
+    const note = notes.find((entry) => time >= entry.start && time <= entry.end);
+    let sample = 0;
+    if (note) {
+      const progress = (time - note.start) / (note.end - note.start);
+      const envelope = Math.sin(Math.PI * progress);
+      sample = Math.sin(2 * Math.PI * note.frequency * time) * envelope * 0.52;
+    }
+    view.setInt16(44 + index * 2, sample * 0x7fff, true);
+  }
+
+  const bytes = new Uint8Array(buffer);
+  const chunks = [];
+  for (let index = 0; index < bytes.length; index += 0x8000) {
+    chunks.push(String.fromCharCode(...bytes.subarray(index, index + 0x8000)));
+  }
+  notificationBeepUrl = `data:audio/wav;base64,${btoa(chunks.join(''))}`;
+  return notificationBeepUrl;
+}
+
+function getNotificationAudioElement() {
+  if (!notificationAudioElement) {
+    notificationAudioElement = new Audio(notificationBeepDataUrl());
+    notificationAudioElement.preload = 'auto';
+    notificationAudioElement.volume = 1;
+    notificationAudioElement.setAttribute('playsinline', '');
+  }
+  return notificationAudioElement;
+}
+
+function withAudioTimeout(promise, timeoutMs = 800) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => window.setTimeout(() => reject(new Error('audio-timeout')), timeoutMs))
+  ]);
+}
+
+async function playNotificationAudioElement(options = {}) {
+  const { silent = false } = options;
+  const audio = getNotificationAudioElement();
+  const previousVolume = audio.volume;
+  try {
+    audio.pause();
+    audio.currentTime = 0;
+    audio.volume = silent ? 0 : 1;
+    const playPromise = audio.play();
+    if (playPromise?.then) await withAudioTimeout(playPromise);
+    if (silent) {
+      audio.pause();
+      audio.currentTime = 0;
+    }
+    audio.volume = previousVolume || 1;
+    return true;
+  } catch {
+    audio.volume = previousVolume || 1;
+    return false;
+  }
+}
+
+function updateSoundToggleUi() {
+  const button = document.getElementById('soundToggleButton');
+  const alertButton = document.getElementById('enableAlertSoundButton');
+  if (!button) return;
+  const ready = notificationSoundEnabled && notificationSoundUnlocked;
+  const needsAction = notificationSoundEnabled && !notificationSoundUnlocked;
+  button.classList.toggle('is-ready', ready);
+  button.classList.toggle('needs-action', needsAction);
+  button.setAttribute('aria-pressed', notificationSoundEnabled ? 'true' : 'false');
+  if (ready) {
+    button.textContent = 'เสียงพร้อม';
+  } else if (needsAction) {
+    button.textContent = 'แตะเปิดเสียง';
+  } else {
+    button.textContent = 'เปิดเสียง';
+  }
+  if (alertButton) {
+    alertButton.classList.toggle('hidden', ready);
+    alertButton.textContent = ready ? 'เสียงพร้อม' : 'เปิดเสียง';
+  }
+}
+
+function playToneSequence(context, options = {}) {
+  const { test = false } = options;
+  const startAt = context.currentTime + 0.02;
+  const notes = test ? [784, 1046] : [880, 1046, 880];
+  notes.forEach((frequency, index) => {
+    const offset = index * 0.18;
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    oscillator.type = 'sine';
+    oscillator.frequency.setValueAtTime(frequency, startAt + offset);
+    gain.gain.setValueAtTime(0.0001, startAt + offset);
+    gain.gain.exponentialRampToValueAtTime(test ? 0.11 : 0.18, startAt + offset + 0.025);
+    gain.gain.exponentialRampToValueAtTime(0.0001, startAt + offset + 0.15);
+    oscillator.connect(gain).connect(context.destination);
+    oscillator.start(startAt + offset);
+    oscillator.stop(startAt + offset + 0.17);
+  });
+}
+
+async function unlockNotificationSound(options = {}) {
+  const { test = false, persist = true, silent = false } = options;
+  if (persist) {
+    notificationSoundEnabled = true;
+    localStorage.setItem(SOUND_ENABLED_KEY, 'true');
+  }
+
+  const audioReady = await playNotificationAudioElement({ silent: silent && !test });
+  if (audioReady) {
+    notificationSoundUnlocked = true;
+    const context = getNotificationAudioContext();
+    if (context?.state === 'suspended') context.resume().catch(() => {});
+    updateSoundToggleUi();
+    return true;
+  }
+
+  const context = getNotificationAudioContext();
+  if (!context) {
+    notificationSoundUnlocked = false;
+    updateSoundToggleUi();
+    return false;
+  }
+
+  try {
+    if (context.state === 'suspended') await withAudioTimeout(context.resume());
+    notificationSoundUnlocked = context.state === 'running';
+    if (notificationSoundUnlocked && test) {
+      playToneSequence(context, { test: true });
+      if (navigator.vibrate) navigator.vibrate(80);
+    }
+  } catch {
+    notificationSoundUnlocked = false;
+  }
+
+  updateSoundToggleUi();
+  return notificationSoundUnlocked;
+}
+
+function playNewOrderSound(options = {}) {
+  const { force = false } = options;
+  if (!force && !notificationSoundEnabled) {
+    updateSoundToggleUi();
+    return false;
+  }
+
+  try {
+    if (notificationSoundUnlocked || force) {
+      const now = Date.now();
+      if (!force && now - lastNotificationSoundAt < SOUND_COOLDOWN_MS) return true;
+      lastNotificationSoundAt = now;
+      const audio = getNotificationAudioElement();
+      audio.pause();
+      audio.currentTime = 0;
+      audio.volume = 1;
+      const playPromise = audio.play();
+      if (playPromise?.then) {
+        playPromise
+          .then(() => {
+            notificationSoundUnlocked = true;
+            updateSoundToggleUi();
+          })
+          .catch(() => {
+            notificationSoundUnlocked = false;
+            updateSoundToggleUi();
+          });
+      }
+      if (navigator.vibrate) navigator.vibrate([180, 80, 180]);
+      return true;
+    }
+
+    const context = getNotificationAudioContext();
+    if (!context) return false;
+    if (context.state !== 'running') {
+      context.resume?.().catch(() => {});
+      notificationSoundUnlocked = false;
+      updateSoundToggleUi();
+      if (navigator.vibrate) navigator.vibrate([180, 80, 180]);
+      return false;
+    }
+
+    const now = Date.now();
+    if (!force && now - lastNotificationSoundAt < SOUND_COOLDOWN_MS) return true;
+    lastNotificationSoundAt = now;
+    notificationSoundUnlocked = true;
+    playToneSequence(context);
+    updateSoundToggleUi();
+    if (navigator.vibrate) navigator.vibrate([180, 80, 180]);
+    return true;
+  } catch {
+    notificationSoundUnlocked = false;
+    updateSoundToggleUi();
+    return false;
+  }
+}
+
+function primeNotificationSoundFromGesture() {
+  if (!notificationSoundEnabled || notificationSoundUnlocked) return;
+  unlockNotificationSound({ test: false, persist: false, silent: true });
+}
+
+async function handleSoundToggle() {
+  const ready = await unlockNotificationSound({ test: true, persist: true });
+  showToast(
+    ready ? 'เปิดเสียงแจ้งเตือนแล้ว' : 'เบราว์เซอร์ยังไม่อนุญาตเสียง กดปุ่มเปิดเสียงอีกครั้ง',
+    ready ? 'default' : 'error'
+  );
+}
+
 function render() {
   document.querySelectorAll('.view').forEach((view) => view.classList.toggle('is-active', view.id === `${activeView}View`));
   document.querySelectorAll('.view-tab').forEach((tab) => tab.classList.toggle('is-active', tab.dataset.view === activeView));
@@ -455,6 +716,7 @@ function render() {
   if (activeView === 'backoffice') renderBackoffice();
   if (activeView === 'settings') renderSettings();
   updateSyncUi();
+  updateSoundToggleUi();
 }
 
 function renderToday() {
@@ -1271,28 +1533,32 @@ async function flushSyncQueue(options = {}) {
   isFlushingSync = true;
   setSyncBadge('Syncing...', 'online');
   const remaining = [];
-  for (const job of state.syncQueue) {
-    try {
-      await apiCall(job.action, job.payload);
-      if (job.action === 'createOrder') {
-        const order = state.orders.find((entry) => entry.order_id === job.payload.order.order_id);
-        if (order) order.sync_status = 'synced';
+  try {
+    for (const job of state.syncQueue) {
+      try {
+        await apiCall(job.action, job.payload);
+        if (job.action === 'createOrder') {
+          const order = state.orders.find((entry) => entry.order_id === job.payload.order.order_id);
+          if (order) order.sync_status = 'synced';
+        }
+        if (job.action === 'updateOrderStatus') {
+          const order = state.orders.find((entry) => entry.order_id === job.payload.order_id);
+          if (order) order.sync_status = 'synced';
+        }
+      } catch (error) {
+        remaining.push({ ...job, attempts: (job.attempts || 0) + 1, last_error: error.message });
       }
-      if (job.action === 'updateOrderStatus') {
-        const order = state.orders.find((entry) => entry.order_id === job.payload.order_id);
-        if (order) order.sync_status = 'synced';
-      }
-    } catch (error) {
-      remaining.push({ ...job, attempts: (job.attempts || 0) + 1, last_error: error.message });
     }
+    state.syncQueue = remaining;
+    saveState();
+    render();
+    if (!silent) {
+      showToast(remaining.length ? `ยังมี ${remaining.length} รายการ sync ไม่สำเร็จ` : successMessage, remaining.length ? 'error' : 'default');
+    }
+  } finally {
+    isFlushingSync = false;
+    updateSyncUi();
   }
-  state.syncQueue = remaining;
-  saveState();
-  render();
-  if (!silent) {
-    showToast(remaining.length ? `ยังมี ${remaining.length} รายการ sync ไม่สำเร็จ` : successMessage, remaining.length ? 'error' : 'default');
-  }
-  isFlushingSync = false;
 }
 
 function hasPendingOrderMutation(orderId) {
@@ -1439,37 +1705,15 @@ function exportOrdersCsv() {
   URL.revokeObjectURL(url);
 }
 
-function playNewOrderSound() {
-  try {
-    const AudioContext = window.AudioContext || window.webkitAudioContext;
-    if (!AudioContext) return;
-    const context = playNewOrderSound.context || new AudioContext();
-    playNewOrderSound.context = context;
-    if (context.state === 'suspended') context.resume().catch(() => {});
-    [0, 0.18, 0.36].forEach((offset) => {
-      const oscillator = context.createOscillator();
-      const gain = context.createGain();
-      oscillator.type = 'sine';
-      oscillator.frequency.setValueAtTime(880, context.currentTime + offset);
-      gain.gain.setValueAtTime(0.001, context.currentTime + offset);
-      gain.gain.exponentialRampToValueAtTime(0.16, context.currentTime + offset + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.001, context.currentTime + offset + 0.16);
-      oscillator.connect(gain).connect(context.destination);
-      oscillator.start(context.currentTime + offset);
-      oscillator.stop(context.currentTime + offset + 0.18);
-    });
-  } catch {
-    // Sound is best-effort because iOS may require a prior user gesture.
-  }
-  if (navigator.vibrate) navigator.vibrate([160, 80, 160]);
-}
-
 function showNewOrderAlert(orders) {
   newOrderAlertOrders = [...orders, ...newOrderAlertOrders]
     .filter((order, index, list) => list.findIndex((entry) => entry.order_id === order.order_id) === index)
     .slice(0, 8);
+  const soundPlayed = playNewOrderSound();
   document.getElementById('newOrderAlertTitle').textContent = `มีออเดอร์ใหม่ ${orders.length} รายการ`;
-  document.getElementById('newOrderAlertText').textContent = 'ตรวจคิว NEW แล้วเริ่มทำตามลำดับเวลาที่เข้ามาก่อน';
+  document.getElementById('newOrderAlertText').textContent = soundPlayed
+    ? 'ตรวจคิว NEW แล้วเริ่มทำตามลำดับเวลาที่เข้ามาก่อน'
+    : 'ตรวจคิว NEW แล้วแตะปุ่มเปิดเสียงด้านบน 1 ครั้ง เพื่อให้แจ้งเตือนครั้งถัดไปมีเสียง';
   document.getElementById('newOrderAlertList').innerHTML = newOrderAlertOrders.map((order) => `
     <article>
       <strong>${escapeHtml(order.queue_no || '-')}</strong>
@@ -1477,7 +1721,6 @@ function showNewOrderAlert(orders) {
     </article>
   `).join('');
   document.getElementById('newOrderAlertModal').classList.remove('hidden');
-  playNewOrderSound();
 }
 
 function hideNewOrderAlert() {
@@ -1607,6 +1850,10 @@ function bindEvents() {
     showToast('บันทึกการตั้งค่าแล้ว');
   });
   document.getElementById('testSyncButton').addEventListener('click', reloadFromSheet);
+  document.getElementById('soundToggleButton').addEventListener('click', handleSoundToggle);
+  document.getElementById('enableAlertSoundButton').addEventListener('click', handleSoundToggle);
+  document.addEventListener('pointerdown', primeNotificationSoundFromGesture, { passive: true });
+  document.addEventListener('keydown', primeNotificationSoundFromGesture);
   document.getElementById('installButton').addEventListener('click', async () => {
     if (!deferredInstallPrompt) return;
     deferredInstallPrompt.prompt();
