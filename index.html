@@ -168,44 +168,71 @@
 
           <div id="summaryCards" class="summary-grid"></div>
 
-          <div class="admin-grid">
-            <section class="panel">
-              <div class="panel-head">
-                <h3>Orders</h3>
-                <select id="orderFilter">
+          <div class="admin-grid kitchen-admin-grid">
+            <section class="panel kitchen-orders-panel">
+              <div class="panel-head kitchen-panel-head">
+                <div>
+                  <p class="eyeline">Kitchen command</p>
+                  <h3>Orders</h3>
+                </div>
+                <div class="kitchen-panel-tools">
+                  <select id="orderFilter" aria-label="Filter order status">
                   <option value="all">ทั้งหมด</option>
                   <option value="new">ใหม่</option>
                   <option value="cooking">กำลังทำ</option>
                   <option value="ready">พร้อมส่ง</option>
                   <option value="done">เสร็จแล้ว</option>
-                </select>
+                  </select>
+                </div>
               </div>
+              <div id="kitchenQueueSummary" class="kitchen-queue-summary"></div>
               <div id="ordersTable" class="orders-table"></div>
             </section>
 
-            <section class="panel">
-              <div class="panel-head">
-                <h3>Menu & add-ons</h3>
-                <button id="reloadSheetButton" class="ghost-button" type="button">Reload Sheet</button>
-              </div>
-              <div id="menuManager" class="manager-list"></div>
-            </section>
+            <div class="secondary-admin-stack">
+              <details class="panel admin-accordion">
+                <summary>
+                  <span>
+                    <strong>Menu & add-ons</strong>
+                    <small>พับไว้ก่อน เปิดเมื่อต้องแก้ราคาเมนู</small>
+                  </span>
+                  <span id="menuPanelCount" class="accordion-count">0 รายการ</span>
+                </summary>
+                <div class="accordion-body">
+                  <div class="compact-panel-actions">
+                    <button id="reloadSheetButton" class="ghost-button" type="button">Reload Sheet</button>
+                  </div>
+                  <div id="menuManager" class="manager-list"></div>
+                </div>
+              </details>
 
-            <section class="panel">
+              <details class="panel admin-accordion">
+                <summary>
+                  <span>
+                    <strong>Inventory control</strong>
+                    <small>พับไว้ก่อน เปิดเมื่อต้องแก้สต็อก</small>
+                  </span>
+                  <span id="inventoryPanelCount" class="accordion-count">0 รายการ</span>
+                </summary>
+                <div class="accordion-body">
+            <section class="panel nested-admin-panel">
               <div class="panel-head">
                 <h3>Inventory control</h3>
                 <span class="small-label">แก้บนเว็บ แล้ว sync ไป Google Sheet</span>
               </div>
               <div id="inventoryList" class="manager-list"></div>
             </section>
+                </div>
+              </details>
 
-            <section class="panel">
+            <section class="panel sync-compact-panel">
               <div class="panel-head">
                 <h3>Sync queue</h3>
                 <span id="queueCount" class="small-label">0 pending</span>
               </div>
               <div id="syncQueueList" class="manager-list"></div>
             </section>
+            </div>
           </div>
         </div>
       </section>

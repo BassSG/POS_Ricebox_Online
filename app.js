@@ -510,6 +510,7 @@ function cartLineHtml(item) {
 
 function renderBackoffice() {
   renderSummary();
+  renderKitchenQueueSummary();
   renderOrdersBoard();
   renderMenuManager();
   renderInventory();
@@ -739,6 +740,84 @@ function orderItemsHtml(order) {
   `;
 }
 
+function kitchenStatusMeta(status) {
+  const meta = {
+    new: { label: 'NEW', title: 'เข้าใหม่', hint: 'รับเข้าเตา' },
+    cooking: { label: 'COOKING', title: 'กำลังทำ', hint: 'กำลังปรุง' },
+    ready: { label: 'READY', title: 'พร้อมส่ง', hint: 'รอปิดงาน' },
+    done: { label: 'DONE', title: 'เสร็จแล้ว', hint: 'ปิดออเดอร์' },
+    void: { label: 'VOID', title: 'ยกเลิก', hint: 'ไม่นับยอด' }
+  };
+  return meta[status] || meta.new;
+}
+
+function kitchenNextAction(status) {
+  const actions = {
+    new: { status: 'cooking', label: 'เริ่มทำ' },
+    cooking: { status: 'ready', label: 'ทำเสร็จ' },
+    ready: { status: 'done', label: 'ปิดออเดอร์' }
+  };
+  return actions[status] || null;
+}
+
+function kitchenVisibleStatuses(filter) {
+  if (filter === 'all') return ORDER_STATUSES.filter((status) => status.id !== 'void');
+  return ORDER_STATUSES.filter((status) => status.id === filter);
+}
+
+function sortKitchenOrders(orders) {
+  return [...orders].sort((a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0));
+}
+
+function kitchenOrdersByStatus(status) {
+  return sortKitchenOrders(state.orders.filter((order) => (order.status || 'new') === status));
+}
+
+function orderTimeLabel(order) {
+  const date = new Date(order.created_at);
+  return Number.isNaN(date.getTime())
+    ? '-'
+    : date.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+}
+
+function renderKitchenQueueSummary() {
+  const target = document.getElementById('kitchenQueueSummary');
+  if (!target) return;
+  const counts = ORDER_STATUSES.reduce((result, status) => {
+    result[status.id] = kitchenOrdersByStatus(status.id).length;
+    return result;
+  }, {});
+  const focusOrders = sortKitchenOrders(state.orders.filter((order) => ['new', 'cooking'].includes(order.status || 'new'))).slice(0, 8);
+  const doneToday = state.orders.filter((order) => (order.status || 'new') === 'done' && orderDateKey(order) === businessDateKey()).length;
+  target.innerHTML = `
+    <div class="kitchen-stat-strip">
+      ${['new', 'cooking', 'ready', 'done'].map((status) => {
+        const meta = kitchenStatusMeta(status);
+        return `
+          <button type="button" class="kitchen-stat-card status-${status}" data-filter-status="${status}">
+            <span>${meta.label}</span>
+            <strong>${counts[status] || 0}</strong>
+            <small>${meta.hint}</small>
+          </button>
+        `;
+      }).join('')}
+    </div>
+    <div class="kitchen-focus-card">
+      <div>
+        <span class="small-label">คิวที่ต้องดูตอนนี้</span>
+        <strong>${focusOrders.length ? focusOrders.map((order) => `${escapeHtml(order.queue_no || '-')} ${kitchenStatusMeta(order.status || 'new').label}`).join(' / ') : 'ไม่มีคิวค้าง'}</strong>
+        <p class="muted">NEW ${counts.new || 0} · COOKING ${counts.cooking || 0} · READY ${counts.ready || 0} · DONE วันนี้ ${doneToday}</p>
+      </div>
+      <div class="kitchen-focus-chips">
+        ${focusOrders.length ? focusOrders.map((order) => {
+          const status = order.status || 'new';
+          return `<button type="button" class="queue-chip status-${status}" data-filter-status="${status}">${escapeHtml(order.queue_no || '-')} · ${kitchenStatusMeta(status).label}</button>`;
+        }).join('') : '<span class="queue-chip is-empty">พร้อมรับออเดอร์ใหม่</span>'}
+      </div>
+    </div>
+  `;
+}
+
 function renderOrdersKitchen() {
   const filter = document.getElementById('orderFilter')?.value || 'all';
   const rows = state.orders
@@ -768,7 +847,7 @@ function renderOrdersKitchen() {
     : '<div class="empty-state">ยังไม่มีออเดอร์ในตัวกรองนี้</div>';
 }
 
-function kitchenOrderCardHtml(order) {
+function kitchenOrderCardHtmlLegacy(order) {
   const status = order.status || 'new';
   return `
     <article class="order-row kitchen-order status-${escapeHtml(status)}">
@@ -792,7 +871,44 @@ function kitchenOrderCardHtml(order) {
   `;
 }
 
-function renderOrdersBoard() {
+function kitchenOrderCardHtml(order) {
+  const status = order.status || 'new';
+  const meta = kitchenStatusMeta(status);
+  const nextAction = kitchenNextAction(status);
+  const customer = order.customer_name || 'ไม่ระบุชื่อลูกค้า';
+  const total = baht(orderSales(order));
+  return `
+    <article class="order-row kitchen-order status-${escapeHtml(status)}">
+      <div class="kitchen-order-top">
+        <div class="queue-badge">${escapeHtml(order.queue_no || '-')}</div>
+        <div class="kitchen-order-identity">
+          <div class="order-title-line">
+            <strong>${escapeHtml(customer)}</strong>
+            <span class="status-pill status-${escapeHtml(status)}">${meta.label}</span>
+          </div>
+          <span>${orderTimeLabel(order)} · ${total} · ${escapeHtml(paymentLabel(order.payment_method))} · ${escapeHtml(order.sync_status || 'local')}</span>
+          ${order.customer_phone ? `<span>รับ/ติดต่อ: ${escapeHtml(order.customer_phone)}</span>` : ''}
+        </div>
+        ${channelBadgeHtml(order.channel)}
+      </div>
+
+      <div class="kitchen-card-actions">
+        ${nextAction ? `<button type="button" class="next-action-button status-${nextAction.status}" data-order-status="${nextAction.status}" data-order-id="${escapeHtml(order.order_id)}">${nextAction.label}</button>` : `<span class="next-action-done">${meta.hint}</span>`}
+        <div class="status-actions order-status-actions">
+          ${ORDER_STATUSES.map((entry) => `<button type="button" data-order-status="${entry.id}" data-order-id="${escapeHtml(order.order_id)}" class="${status === entry.id ? 'is-active' : ''} status-${entry.id}">${entry.label}</button>`).join('')}
+          <button type="button" data-delete-order="${escapeHtml(order.order_id)}" class="is-danger">ลบ</button>
+        </div>
+      </div>
+
+      <div class="order-kitchen-detail">
+        ${orderItemsHtml(order)}
+        ${order.notes ? `<div class="order-note-block"><strong>หมายเหตุทั้งบิล</strong><p>${escapeHtml(order.notes)}</p></div>` : ''}
+      </div>
+    </article>
+  `;
+}
+
+function renderOrdersBoardLegacy() {
   const filter = document.getElementById('orderFilter')?.value || 'all';
   const table = document.getElementById('ordersTable');
   const statuses = filter === 'all'
@@ -819,7 +935,34 @@ function renderOrdersBoard() {
   }).join('');
 }
 
+function renderOrdersBoard() {
+  const filter = document.getElementById('orderFilter')?.value || 'all';
+  const table = document.getElementById('ordersTable');
+  const statuses = kitchenVisibleStatuses(filter);
+  table.className = `orders-table order-board kitchen-board ${filter === 'all' ? 'is-all-statuses' : 'is-filtered'}`;
+  table.innerHTML = statuses.map((status) => {
+    const meta = kitchenStatusMeta(status.id);
+    const orders = kitchenOrdersByStatus(status.id).slice(0, filter === 'all' ? 40 : 100);
+    return `
+      <section class="order-lane status-${status.id}">
+        <div class="order-lane-head">
+          <div>
+            <span class="small-label">${meta.label}</span>
+            <strong>${orders.length} ออเดอร์</strong>
+          </div>
+          <small>${meta.title}</small>
+        </div>
+        <div class="order-lane-list">
+          ${orders.length ? orders.map((order) => kitchenOrderCardHtml(order)).join('') : '<div class="empty-state">ไม่มีออเดอร์ในสถานะนี้</div>'}
+        </div>
+      </section>
+    `;
+  }).join('');
+}
+
 function renderMenuManager() {
+  const countLabel = document.getElementById('menuPanelCount');
+  if (countLabel) countLabel.textContent = `${state.menu.length} รายการ`;
   document.getElementById('menuManager').innerHTML = state.menu.map((item) => `
     <article class="menu-row">
       <div>
@@ -850,6 +993,11 @@ function renderInventoryLegacy() {
 }
 
 function renderInventory() {
+  const countLabel = document.getElementById('inventoryPanelCount');
+  if (countLabel) {
+    const lowCount = state.inventory.filter((item) => numberValue(item.on_hand) <= numberValue(item.reorder_level)).length;
+    countLabel.textContent = lowCount ? `${lowCount} ต้องซื้อ` : `${state.inventory.length} รายการ`;
+  }
   document.getElementById('inventoryList').innerHTML = state.inventory.map((item) => {
     const low = numberValue(item.on_hand) <= numberValue(item.reorder_level);
     return `
@@ -1186,6 +1334,7 @@ function bindEvents() {
     button.addEventListener('click', () => {
       activeView = button.dataset.view;
       render();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     });
   });
   document.querySelectorAll('.filter-pill').forEach((button) => {
@@ -1230,6 +1379,13 @@ function bindEvents() {
   document.getElementById('clearCartButton').addEventListener('click', resetCart);
   document.getElementById('newOrderButton').addEventListener('click', resetCart);
   document.getElementById('orderFilter').addEventListener('change', renderOrdersBoard);
+  document.getElementById('kitchenQueueSummary').addEventListener('click', (event) => {
+    const button = event.target.closest('[data-filter-status]');
+    if (!button) return;
+    document.getElementById('orderFilter').value = button.dataset.filterStatus;
+    renderOrdersBoard();
+    document.querySelector('.kitchen-orders-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
   document.getElementById('ordersTable').addEventListener('click', (event) => {
     const deleteButton = event.target.closest('[data-delete-order]');
     const button = event.target.closest('[data-order-status]');
