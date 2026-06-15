@@ -408,7 +408,7 @@ function cartLineHtml(item) {
 
 function renderBackoffice() {
   renderSummary();
-  renderOrdersKitchen();
+  renderOrdersBoard();
   renderMenuManager();
   renderInventory();
   renderSyncQueue();
@@ -518,6 +518,57 @@ function renderOrdersKitchen() {
       </article>
     `).join('')
     : '<div class="empty-state">ยังไม่มีออเดอร์ในตัวกรองนี้</div>';
+}
+
+function kitchenOrderCardHtml(order) {
+  const status = order.status || 'new';
+  return `
+    <article class="order-row kitchen-order status-${escapeHtml(status)}">
+      <div class="order-meta">
+        <div class="order-title-line">
+          <strong>${escapeHtml(order.queue_no)} · ${escapeHtml(order.customer_name || 'ไม่ระบุชื่อลูกค้า')}</strong>
+          ${channelBadgeHtml(order.channel)}
+        </div>
+        <span>${new Date(order.created_at).toLocaleString('th-TH')} · ${baht(order.total)} · ${escapeHtml(order.payment_method)} · ${escapeHtml(order.sync_status || 'local')}</span>
+        ${order.customer_phone ? `<span>รับ/ติดต่อ: ${escapeHtml(order.customer_phone)}</span>` : ''}
+      </div>
+      <div class="status-actions order-status-actions">
+        ${ORDER_STATUSES.map((entry) => `<button type="button" data-order-status="${entry.id}" data-order-id="${order.order_id}" class="${status === entry.id ? 'is-active' : ''} status-${entry.id}">${entry.label}</button>`).join('')}
+        <button type="button" data-delete-order="${order.order_id}" class="is-danger">ลบ</button>
+      </div>
+      <div class="order-kitchen-detail">
+        ${orderItemsHtml(order)}
+        ${order.notes ? `<div class="order-note-block"><strong>หมายเหตุทั้งบิล</strong><p>${escapeHtml(order.notes)}</p></div>` : ''}
+      </div>
+    </article>
+  `;
+}
+
+function renderOrdersBoard() {
+  const filter = document.getElementById('orderFilter')?.value || 'all';
+  const table = document.getElementById('ordersTable');
+  const statuses = filter === 'all'
+    ? ORDER_STATUSES
+    : ORDER_STATUSES.filter((status) => status.id === filter);
+  table.className = `orders-table order-board ${filter === 'all' ? 'is-all-statuses' : 'is-filtered'}`;
+  table.innerHTML = statuses.map((status) => {
+    const orders = state.orders
+      .filter((order) => (order.status || 'new') === status.id)
+      .slice(0, 60);
+    return `
+      <section class="order-lane status-${status.id}">
+        <div class="order-lane-head">
+          <div>
+            <span class="small-label">${status.label}</span>
+            <strong>${orders.length} ออเดอร์</strong>
+          </div>
+        </div>
+        <div class="order-lane-list">
+          ${orders.length ? orders.map((order) => kitchenOrderCardHtml(order)).join('') : '<div class="empty-state">ไม่มีออเดอร์ในสถานะนี้</div>'}
+        </div>
+      </section>
+    `;
+  }).join('');
 }
 
 function renderMenuManager() {
@@ -930,7 +981,7 @@ function bindEvents() {
   document.getElementById('saveOrderButton').addEventListener('click', saveOrder);
   document.getElementById('clearCartButton').addEventListener('click', resetCart);
   document.getElementById('newOrderButton').addEventListener('click', resetCart);
-  document.getElementById('orderFilter').addEventListener('change', renderOrdersKitchen);
+  document.getElementById('orderFilter').addEventListener('change', renderOrdersBoard);
   document.getElementById('ordersTable').addEventListener('click', (event) => {
     const deleteButton = event.target.closest('[data-delete-order]');
     const button = event.target.closest('[data-order-status]');
