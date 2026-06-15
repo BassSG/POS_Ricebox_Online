@@ -2,6 +2,7 @@ const CONFIG = window.POS_CONFIG || {};
 const STORAGE_KEY = 'riceBoxPosStateV1';
 const DEVICE_KEY = 'riceBoxPosDeviceId';
 const APP_VERSION = CONFIG.appVersion || '1.0.0';
+const BUSINESS_TIME_ZONE = 'Asia/Bangkok';
 
 const DEFAULT_MENU = [
   {
@@ -250,6 +251,107 @@ function channelMeta(value) {
   return PLATFORM_CHANNELS.find((channel) => channel.id === channelId) || PLATFORM_CHANNELS[0];
 }
 
+function orderItems(order) {
+  return Array.isArray(order.items) ? order.items : safeJson(order.items_json, []);
+}
+
+function normalizeOrderItemForTotals(item) {
+  const addons = Array.isArray(item.addons) ? item.addons : safeJson(item.addons, []);
+  return {
+    ...item,
+    qty: numberValue(item.qty) || 1,
+    unit_price: numberValue(item.unit_price ?? item.base_price ?? item.price),
+    cost_estimate: numberValue(item.cost_estimate),
+    addons: Array.isArray(addons) ? addons : []
+  };
+}
+
+function activeOrders(orders = state.orders) {
+  return orders.filter((order) => (order.status || 'new') !== 'void');
+}
+
+function businessDateKey(date = new Date()) {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: BUSINESS_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(date);
+}
+
+function orderDateKey(order) {
+  const value = order?.created_at || order?.updated_at || new Date();
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? businessDateKey() : businessDateKey(date);
+}
+
+function thaiDateLabel(dateKey) {
+  const date = new Date(`${dateKey}T00:00:00+07:00`);
+  return date.toLocaleDateString('th-TH', {
+    timeZone: BUSINESS_TIME_ZONE,
+    day: 'numeric',
+    month: 'short',
+    year: '2-digit'
+  });
+}
+
+function recentBusinessDates(days) {
+  return Array.from({ length: days }, (_, index) => {
+    const date = new Date();
+    date.setDate(date.getDate() - index);
+    return businessDateKey(date);
+  });
+}
+
+function orderSales(order) {
+  const storedTotal = numberValue(order.total);
+  if (storedTotal > 0) return storedTotal;
+  const subtotal = orderItems(order).reduce((sum, item) => sum + lineTotal(normalizeOrderItemForTotals(item)), 0);
+  return Math.max(0, subtotal - numberValue(order.discount));
+}
+
+function orderBoxes(order) {
+  return orderItems(order).reduce((sum, item) => sum + (numberValue(item.qty) || 1), 0);
+}
+
+function orderEstimatedCost(order) {
+  return orderItems(order).reduce((sum, item) => sum + lineCost(normalizeOrderItemForTotals(item)), 0);
+}
+
+function summarizeOrders(orders) {
+  const rows = activeOrders(orders);
+  const sales = rows.reduce((sum, order) => sum + orderSales(order), 0);
+  const boxes = rows.reduce((sum, order) => sum + orderBoxes(order), 0);
+  const cost = rows.reduce((sum, order) => sum + orderEstimatedCost(order), 0);
+  return {
+    orders: rows.length,
+    sales,
+    boxes,
+    cost,
+    profit: sales - cost,
+    avgTicket: rows.length ? sales / rows.length : 0
+  };
+}
+
+function paymentLabel(value) {
+  const labels = {
+    transfer: 'โอน',
+    cash: 'เงินสด',
+    platform: 'แพลตฟอร์ม',
+    pending: 'ยังไม่จ่าย'
+  };
+  return labels[value] || value || 'ไม่ระบุ';
+}
+
+function groupOrdersBy(orders, keyFn) {
+  return orders.reduce((map, order) => {
+    const key = keyFn(order);
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(order);
+    return map;
+  }, new Map());
+}
+
 function queueNo() {
   const today = todayIso();
   const count = state.orders.filter((order) => order.created_at?.slice(0, 10) === today).length + 1;
@@ -414,7 +516,7 @@ function renderBackoffice() {
   renderSyncQueue();
 }
 
-function renderSummary() {
+function renderSummaryLegacy() {
   const today = todayIso();
   const todayOrders = state.orders.filter((order) => order.created_at?.slice(0, 10) === today);
   const doneOrActive = todayOrders.filter((order) => order.status !== 'void');
@@ -434,6 +536,152 @@ function renderSummary() {
       <p class="muted">${note}</p>
     </article>
   `).join('');
+}
+
+function renderSummary() {
+  const today = businessDateKey();
+  const todayOrders = state.orders.filter((order) => orderDateKey(order) === today);
+  const summary = summarizeOrders(todayOrders);
+  const pending = state.syncQueue.length;
+  document.getElementById('summaryCards').innerHTML = [
+    ['ยอดขายวันนี้', baht(summary.sales), `${summary.orders} orders · เฉลี่ย ${baht(summary.avgTicket)}`],
+    ['จำนวนกล่อง', `${summary.boxes.toLocaleString('th-TH')} กล่อง`, 'รวมทุกเมนูที่ยังไม่ void'],
+    ['กำไรประมาณ', baht(summary.profit), 'ก่อนค่าไฟ/แก๊ส/แพลตฟอร์ม'],
+    ['รอ Sync', `${pending}`, 'รายการในเครื่อง']
+  ].map(([label, value, note]) => `
+    <article class="summary-card">
+      <span class="small-label">${label}</span>
+      <strong>${value}</strong>
+      <p class="muted">${note}</p>
+    </article>
+  `).join('');
+}
+
+function salesMetricCard(label, value, note) {
+  return `
+    <article class="sales-metric-card">
+      <span class="small-label">${label}</span>
+      <strong>${value}</strong>
+      <p class="muted">${note}</p>
+    </article>
+  `;
+}
+
+function reportProgressRow(labelHtml, metrics, maxSales, extra = '') {
+  const width = maxSales && metrics.sales > 0 ? Math.max(6, Math.round((metrics.sales / maxSales) * 100)) : 0;
+  return `
+    <div class="report-row">
+      <div class="report-row-main">
+        ${labelHtml}
+        <div class="report-progress" aria-hidden="true"><span style="width: ${width}%"></span></div>
+        ${extra}
+      </div>
+      <div class="report-row-value">
+        <strong>${baht(metrics.sales)}</strong>
+        <span>${metrics.orders} ออเดอร์ · ${metrics.boxes} กล่อง</span>
+      </div>
+    </div>
+  `;
+}
+
+function renderSalesReport() {
+  const content = document.getElementById('salesReportContent');
+  const active = activeOrders();
+  const todayKey = businessDateKey();
+  const last7Keys = recentBusinessDates(7);
+  const todayOrders = active.filter((order) => orderDateKey(order) === todayKey);
+  const last7Orders = active.filter((order) => last7Keys.includes(orderDateKey(order)));
+  const todaySummary = summarizeOrders(todayOrders);
+  const last7Summary = summarizeOrders(last7Orders);
+  const allSummary = summarizeOrders(active);
+  const pendingPayment = summarizeOrders(todayOrders.filter((order) => order.payment_status === 'pending' || order.payment_method === 'pending'));
+  const dailyRows = last7Keys.map((key) => {
+    const summary = summarizeOrders(active.filter((order) => orderDateKey(order) === key));
+    return { key, summary };
+  });
+  const maxDailySales = Math.max(1, ...dailyRows.map((row) => row.summary.sales));
+  const channelGroups = groupOrdersBy(todayOrders, (order) => normalizeChannel(order.channel));
+  const channelRows = PLATFORM_CHANNELS.map((channel) => ({
+    channel,
+    summary: summarizeOrders(channelGroups.get(channel.id) || [])
+  })).filter((row) => row.summary.orders > 0);
+  const maxChannelSales = Math.max(1, ...channelRows.map((row) => row.summary.sales));
+  const paymentRows = Array.from(groupOrdersBy(todayOrders, (order) => order.payment_method || 'pending').entries())
+    .map(([payment, orders]) => ({ payment, summary: summarizeOrders(orders) }))
+    .sort((a, b) => b.summary.sales - a.summary.sales);
+  const maxPaymentSales = Math.max(1, ...paymentRows.map((row) => row.summary.sales));
+
+  content.innerHTML = `
+    <div class="sales-report-grid">
+      <article class="sales-hero">
+        <span class="small-label">ยอดขายวันนี้</span>
+        <strong>${baht(todaySummary.sales)}</strong>
+        <p>${todaySummary.orders} ออเดอร์ · ${todaySummary.boxes} กล่อง · เฉลี่ย ${baht(todaySummary.avgTicket)}</p>
+      </article>
+      ${salesMetricCard('7 วันล่าสุด', baht(last7Summary.sales), `${last7Summary.orders} ออเดอร์ · กำไรประมาณ ${baht(last7Summary.profit)}`)}
+      ${salesMetricCard('ยอดรวมที่โหลดอยู่', baht(allSummary.sales), `${allSummary.orders} ออเดอร์ทั้งหมดในเครื่อง/Sheet`)}
+      ${salesMetricCard('ค้างชำระวันนี้', baht(pendingPayment.sales), `${pendingPayment.orders} ออเดอร์ที่ยังไม่จ่าย`)}
+    </div>
+
+    <div class="sales-report-sections">
+      <section class="report-panel report-panel-wide">
+        <div class="report-panel-head">
+          <h3>ยอดขาย 7 วันล่าสุด</h3>
+          <span>ไม่รวมออเดอร์ void</span>
+        </div>
+        <div class="report-list">
+          ${dailyRows.map((row) => reportProgressRow(
+            `<strong>${thaiDateLabel(row.key)}</strong>`,
+            row.summary,
+            maxDailySales,
+            `<span class="report-row-note">เฉลี่ย ${baht(row.summary.avgTicket)}</span>`
+          )).join('')}
+        </div>
+      </section>
+
+      <section class="report-panel">
+        <div class="report-panel-head">
+          <h3>วันนี้ตามแพลตฟอร์ม</h3>
+          <span>${todaySummary.orders} ออเดอร์</span>
+        </div>
+        <div class="report-list">
+          ${channelRows.length ? channelRows.map((row) => {
+            const label = `
+              <div class="report-channel">
+                <img src="${row.channel.icon}" alt="${row.channel.label}">
+                <strong>${row.channel.label}</strong>
+              </div>
+            `;
+            return reportProgressRow(label, row.summary, maxChannelSales, `<span class="report-row-note">เฉลี่ย ${baht(row.summary.avgTicket)}</span>`);
+          }).join('') : '<div class="empty-state">ยังไม่มีออเดอร์วันนี้</div>'}
+        </div>
+      </section>
+
+      <section class="report-panel">
+        <div class="report-panel-head">
+          <h3>วิธีรับเงินวันนี้</h3>
+          <span>${baht(todaySummary.sales)}</span>
+        </div>
+        <div class="report-list">
+          ${paymentRows.length ? paymentRows.map((row) => reportProgressRow(
+            `<strong>${escapeHtml(paymentLabel(row.payment))}</strong>`,
+            row.summary,
+            maxPaymentSales,
+            `<span class="report-row-note">สัดส่วน ${todaySummary.sales ? Math.round((row.summary.sales / todaySummary.sales) * 100) : 0}%</span>`
+          )).join('') : '<div class="empty-state">ยังไม่มีข้อมูลการชำระเงินวันนี้</div>'}
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function openSalesReport() {
+  renderSalesReport();
+  document.getElementById('salesReportModal').classList.remove('hidden');
+}
+
+function closeSalesReport() {
+  document.getElementById('salesReportModal').classList.add('hidden');
 }
 
 function renderOrders() {
@@ -997,6 +1245,14 @@ function bindEvents() {
     if (button) saveInventoryItem(button.dataset.saveInventory);
   });
   document.getElementById('reloadSheetButton').addEventListener('click', reloadFromSheet);
+  document.getElementById('salesReportButton').addEventListener('click', openSalesReport);
+  document.getElementById('closeSalesReportButton').addEventListener('click', closeSalesReport);
+  document.getElementById('salesReportModal').addEventListener('click', (event) => {
+    if (event.target.id === 'salesReportModal') closeSalesReport();
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') closeSalesReport();
+  });
   document.getElementById('exportCsvButton').addEventListener('click', exportOrdersCsv);
   document.getElementById('saveSettingsButton').addEventListener('click', () => {
     state.settings.appsScriptUrl = document.getElementById('scriptUrlInput').value.trim();

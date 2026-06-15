@@ -160,7 +160,10 @@
               <p class="eyeline">Back office</p>
               <h2 id="backoffice-title">ยอดขาย ออเดอร์ และสต็อก</h2>
             </div>
-            <button id="exportCsvButton" class="secondary-button" type="button">Export CSV</button>
+            <div class="backoffice-actions">
+              <button id="salesReportButton" class="primary-button" type="button">สรุปยอดขาย</button>
+              <button id="exportCsvButton" class="secondary-button" type="button">Export CSV</button>
+            </div>
           </div>
 
           <div id="summaryCards" class="summary-grid"></div>
@@ -250,6 +253,19 @@
         </div>
       </section>
     </main>
+
+    <div id="salesReportModal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="salesReportTitle">
+      <section class="sales-modal">
+        <div class="modal-head">
+          <div>
+            <p class="eyeline">Sales report</p>
+            <h2 id="salesReportTitle">สรุปยอดขาย</h2>
+          </div>
+          <button id="closeSalesReportButton" class="icon-button" type="button" aria-label="Close sales report">×</button>
+        </div>
+        <div id="salesReportContent" class="sales-report-content"></div>
+      </section>
+    </div>
 
     <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
   </div>

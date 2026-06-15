@@ -662,6 +662,13 @@ textarea:focus {
   color: var(--ink);
 }
 
+.backoffice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
 .auto-sync-note {
   display: grid;
   min-height: 42px;
@@ -1033,6 +1040,216 @@ code {
   line-height: 1.65;
 }
 
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  overflow: auto;
+  background: rgba(33, 22, 15, 0.45);
+  padding: 18px;
+  backdrop-filter: blur(12px);
+}
+
+.sales-modal {
+  display: grid;
+  gap: 18px;
+  width: min(1080px, 100%);
+  max-height: min(860px, calc(100vh - 36px));
+  overflow: auto;
+  border: 1px solid rgba(234, 220, 199, 0.88);
+  border-radius: 26px;
+  background:
+    radial-gradient(circle at top left, rgba(241, 184, 75, 0.18), transparent 28rem),
+    var(--surface);
+  box-shadow: 0 28px 80px rgba(33, 22, 15, 0.28);
+  padding: 20px;
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 14px;
+}
+
+.modal-head h2 {
+  margin: 4px 0 0;
+  font-size: clamp(1.35rem, 2.2vw, 2rem);
+}
+
+.sales-report-content {
+  display: grid;
+  gap: 16px;
+}
+
+.sales-report-grid {
+  display: grid;
+  grid-template-columns: 1.35fr repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.sales-hero,
+.sales-metric-card,
+.report-panel {
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: rgba(255, 253, 248, 0.9);
+  box-shadow: var(--shadow-soft);
+}
+
+.sales-hero {
+  display: grid;
+  align-content: center;
+  min-height: 150px;
+  background:
+    linear-gradient(135deg, rgba(189, 63, 42, 0.94), rgba(33, 22, 15, 0.94)),
+    var(--ink);
+  color: #fff;
+  padding: 22px;
+}
+
+.sales-hero .small-label,
+.sales-hero p {
+  color: rgba(255, 249, 238, 0.76);
+}
+
+.sales-hero strong {
+  display: block;
+  margin-top: 8px;
+  font-size: clamp(2.3rem, 6vw, 4.4rem);
+  line-height: 0.98;
+}
+
+.sales-hero p {
+  margin: 10px 0 0;
+  font-weight: 900;
+}
+
+.sales-metric-card {
+  padding: 17px;
+}
+
+.sales-metric-card strong {
+  display: block;
+  margin-top: 8px;
+  font-size: 1.55rem;
+}
+
+.sales-report-sections {
+  display: grid;
+  grid-template-columns: 1.35fr 1fr;
+  gap: 12px;
+}
+
+.report-panel {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+  padding: 16px;
+}
+
+.report-panel-wide {
+  grid-row: span 2;
+}
+
+.report-panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.report-panel-head h3 {
+  margin: 0;
+  font-size: 1.02rem;
+}
+
+.report-panel-head span,
+.report-row-note {
+  color: var(--soy);
+  font-size: 0.82rem;
+  font-weight: 900;
+}
+
+.report-list {
+  display: grid;
+  gap: 10px;
+}
+
+.report-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  border: 1px solid rgba(234, 220, 199, 0.78);
+  border-radius: 16px;
+  background: #fff;
+  padding: 12px;
+}
+
+.report-row-main {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+}
+
+.report-row-main > strong,
+.report-channel strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.report-row-value {
+  display: grid;
+  justify-items: end;
+  gap: 2px;
+  min-width: 128px;
+}
+
+.report-row-value strong {
+  font-size: 1.05rem;
+}
+
+.report-row-value span {
+  color: var(--soy);
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-align: right;
+}
+
+.report-progress {
+  height: 9px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--cream);
+}
+
+.report-progress span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--chili), var(--wok));
+}
+
+.report-channel {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 9px;
+}
+
+.report-channel img {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: #fff;
+  object-fit: contain;
+}
+
 .toast {
   position: fixed;
   right: 18px;
@@ -1072,6 +1289,15 @@ code {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .sales-report-grid,
+  .sales-report-sections {
+    grid-template-columns: 1fr;
+  }
+
+  .report-panel-wide {
+    grid-row: auto;
+  }
+
   .orders-table.order-board {
     grid-template-columns: 1fr;
     overflow-x: visible;
@@ -1099,6 +1325,7 @@ code {
 
   .view-tabs,
   .topbar-actions,
+  .backoffice-actions,
   .section-heading,
   .quick-add-panel,
   .cart-head,
@@ -1160,6 +1387,49 @@ code {
 
   .kitchen-order {
     grid-template-columns: 1fr;
+  }
+
+  .modal-overlay {
+    align-items: stretch;
+    padding: 10px;
+  }
+
+  .sales-modal {
+    max-height: calc(100vh - 20px);
+    border-radius: 18px;
+    padding: 14px;
+  }
+
+  .modal-head {
+    align-items: flex-start;
+    flex-direction: row;
+  }
+
+  .modal-head .icon-button {
+    flex: 0 0 auto;
+    align-self: flex-start;
+  }
+
+  .sales-report-grid {
+    gap: 10px;
+  }
+
+  .sales-hero {
+    min-height: 136px;
+    padding: 18px;
+  }
+
+  .report-row {
+    grid-template-columns: 1fr;
+  }
+
+  .report-row-value {
+    justify-items: start;
+    min-width: 0;
+  }
+
+  .report-row-value span {
+    text-align: left;
   }
 
   .order-status-actions {
