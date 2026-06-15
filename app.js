@@ -1850,8 +1850,8 @@ function bindEvents() {
     showToast('บันทึกการตั้งค่าแล้ว');
   });
   document.getElementById('testSyncButton').addEventListener('click', reloadFromSheet);
-  document.getElementById('soundToggleButton').addEventListener('click', handleSoundToggle);
-  document.getElementById('enableAlertSoundButton').addEventListener('click', handleSoundToggle);
+  document.getElementById('soundToggleButton')?.addEventListener('click', handleSoundToggle);
+  document.getElementById('enableAlertSoundButton')?.addEventListener('click', handleSoundToggle);
   document.addEventListener('pointerdown', primeNotificationSoundFromGesture, { passive: true });
   document.addEventListener('keydown', primeNotificationSoundFromGesture);
   document.getElementById('installButton').addEventListener('click', async () => {
