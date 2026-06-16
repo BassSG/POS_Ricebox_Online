@@ -110,6 +110,10 @@ let lastNotificationSoundAt = 0;
 const UI_CLOCK_INTERVAL_MS = 30000;
 const SHEET_POLL_INTERVAL_MS = 20000;
 const SOUND_COOLDOWN_MS = 900;
+const SYNC_BATCH_SIZE = 8;
+const SYNC_MAX_ATTEMPTS = 8;
+const SYNC_RETRY_BASE_MS = 15000;
+const SYNC_RETRY_MAX_MS = 300000;
 
 function loadState() {
   const saved = readJson(STORAGE_KEY, {});
@@ -435,6 +439,105 @@ function escapeHtml(value) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+function syncJobOrderId(job) {
+  if (job.action === 'createOrder') return job.payload?.order?.order_id || '';
+  if (job.action === 'updateOrderStatus' || job.action === 'deleteOrder') return job.payload?.order_id || '';
+  return '';
+}
+
+function syncJobInventoryId(job) {
+  return job.action === 'upsertInventory' ? job.payload?.inventory?.item_id || '' : '';
+}
+
+function syncJobKey(job) {
+  if (job.action === 'createOrder') return `createOrder:${syncJobOrderId(job)}`;
+  if (job.action === 'updateOrderStatus') return `updateOrderStatus:${syncJobOrderId(job)}`;
+  if (job.action === 'deleteOrder') return `deleteOrder:${syncJobOrderId(job)}`;
+  if (job.action === 'upsertInventory') return `upsertInventory:${syncJobInventoryId(job)}`;
+  return `${job.action}:${job.id}`;
+}
+
+function syncRetryDelay(attempts) {
+  const exponent = Math.max(0, Math.min(6, attempts - 1));
+  return Math.min(SYNC_RETRY_MAX_MS, SYNC_RETRY_BASE_MS * (2 ** exponent));
+}
+
+function syncJobIsReady(job, now = Date.now()) {
+  if (job.blocked) return false;
+  const nextRetry = dateValue(job.next_retry_at)?.getTime() || 0;
+  return !nextRetry || nextRetry <= now;
+}
+
+function syncJobLabel(job) {
+  const labels = {
+    createOrder: 'บันทึกออเดอร์',
+    updateOrderStatus: 'อัปเดตสถานะ',
+    deleteOrder: 'ลบออเดอร์',
+    upsertInventory: 'บันทึกสต็อก'
+  };
+  return labels[job.action] || job.action;
+}
+
+function syncJobDetail(job) {
+  if (job.action === 'createOrder') {
+    const order = job.payload?.order || {};
+    return `${order.queue_no || order.order_id || job.id} · ${baht(order.total || 0)}`;
+  }
+  if (job.action === 'updateOrderStatus') return `${job.payload?.order_id || job.id} → ${job.payload?.status || '-'}`;
+  if (job.action === 'deleteOrder') return job.payload?.order_id || job.id;
+  if (job.action === 'upsertInventory') {
+    const item = job.payload?.inventory || {};
+    return `${item.name || item.item_id || job.id} · ${item.on_hand ?? '-'} ${item.unit || ''}`;
+  }
+  return job.id || '';
+}
+
+function compactSyncQueue() {
+  const latestByKey = new Map();
+  const result = [];
+
+  state.syncQueue.forEach((job) => {
+    const key = syncJobKey(job);
+    if (job.action === 'updateOrderStatus' || job.action === 'upsertInventory') {
+      latestByKey.set(key, job);
+      return;
+    }
+    if (job.action === 'createOrder') {
+      const existingIndex = result.findIndex((entry) => syncJobKey(entry) === key);
+      if (existingIndex !== -1) result.splice(existingIndex, 1);
+    }
+    result.push(job);
+  });
+
+  latestByKey.forEach((job) => {
+    const orderId = syncJobOrderId(job);
+    const pendingCreate = orderId && result.find((entry) => entry.action === 'createOrder' && syncJobOrderId(entry) === orderId);
+    if (pendingCreate && job.action === 'updateOrderStatus') {
+      pendingCreate.payload.order.status = job.payload.status;
+      pendingCreate.payload.order.updated_at = job.payload.updated_at;
+      if (job.payload.status === 'done') pendingCreate.payload.order.completed_at = job.payload.updated_at;
+      return;
+    }
+    result.push(job);
+  });
+
+  state.syncQueue = result;
+}
+
+function enqueueSyncJob(job) {
+  const prepared = {
+    attempts: 0,
+    created_at: nowIso(),
+    ...job,
+    last_error: '',
+    last_attempt_at: '',
+    next_retry_at: '',
+    blocked: false
+  };
+  state.syncQueue.push(prepared);
+  compactSyncQueue();
 }
 
 function showToast(message, tone = 'default') {
@@ -820,7 +923,7 @@ function renderBackoffice() {
   renderOrdersBoard();
   renderMenuManager();
   renderInventory();
-  renderSyncQueue();
+  renderSyncQueueStable();
 }
 
 function renderSummaryLegacy() {
@@ -1352,6 +1455,46 @@ function renderSyncQueue() {
     : '<div class="empty-state">ไม่มีรายการค้าง Sync</div>';
 }
 
+function renderSyncQueueStable() {
+  compactSyncQueue();
+  const now = Date.now();
+  const readyCount = state.syncQueue.filter((job) => syncJobIsReady(job, now)).length;
+  const blockedCount = state.syncQueue.filter((job) => job.blocked).length;
+  const waitingCount = Math.max(0, state.syncQueue.length - readyCount - blockedCount);
+  const queueCount = document.getElementById('queueCount');
+  const summary = document.getElementById('syncQueueSummary');
+  const list = document.getElementById('syncQueueList');
+  if (!queueCount || !summary || !list) return;
+
+  queueCount.textContent = `${state.syncQueue.length} pending`;
+  summary.innerHTML = state.syncQueue.length
+    ? `
+      <div class="sync-summary-strip">
+        <span>Ready ${readyCount}</span>
+        <span>Waiting ${waitingCount}</span>
+        <span class="${blockedCount ? 'is-danger' : ''}">Blocked ${blockedCount}</span>
+      </div>
+    `
+    : '<p class="muted">Sync queue is clear.</p>';
+
+  list.innerHTML = state.syncQueue.length
+    ? state.syncQueue.slice(0, 30).map((job) => `
+      <article class="sync-row ${job.blocked ? 'is-blocked' : ''}">
+        <div>
+          <strong>${escapeHtml(syncJobLabel(job))}</strong>
+          <p class="muted">${escapeHtml(syncJobDetail(job))}</p>
+        </div>
+        <div class="sync-row-meta">
+          <span>attempts ${job.attempts || 0}</span>
+          ${job.next_retry_at && !job.blocked ? `<span>retry ${escapeHtml(orderTimeLabel({ created_at: job.next_retry_at }))}</span>` : ''}
+          ${job.blocked ? '<span class="sync-error-text">blocked</span>' : ''}
+        </div>
+        ${job.last_error ? `<p class="sync-error-text">${escapeHtml(job.last_error)}</p>` : ''}
+      </article>
+    `).join('')
+    : '<div class="empty-state">No pending sync jobs</div>';
+}
+
 function renderSettings() {
   document.getElementById('sheetIdInput').value = state.settings.sheetId || '';
   document.getElementById('scriptUrlInput').value = state.settings.appsScriptUrl || '';
@@ -1359,8 +1502,13 @@ function renderSettings() {
 }
 
 function updateSyncUi() {
+  const blockedCount = state.syncQueue.filter((job) => job.blocked).length;
   if (!state.settings.appsScriptUrl) {
     setSyncBadge(`${state.syncQueue.length} local`, state.syncQueue.length ? 'error' : 'local');
+    return;
+  }
+  if (blockedCount) {
+    setSyncBadge(`${blockedCount} blocked`, 'error');
     return;
   }
   setSyncBadge(state.syncQueue.length ? `${state.syncQueue.length} pending` : 'Sheet ready', state.syncQueue.length ? 'error' : 'online');
@@ -1423,7 +1571,7 @@ async function saveOrder() {
     sync_status: state.settings.appsScriptUrl ? 'pending' : 'local'
   };
   state.orders.unshift(order);
-  state.syncQueue.push({ id: order.order_id, action: 'createOrder', payload: { order }, attempts: 0, created_at: createdAt });
+  enqueueSyncJob({ id: order.order_id, action: 'createOrder', payload: { order }, created_at: createdAt });
   state.cart = freshCart();
   saveState();
   render();
@@ -1455,7 +1603,7 @@ function updateOrderStatus(orderId, status) {
   }
   order.sync_status = state.settings.appsScriptUrl ? 'pending' : 'local';
   state.syncQueue = state.syncQueue.filter((job) => !(job.action === 'updateOrderStatus' && job.payload?.order_id === orderId));
-  state.syncQueue.push({ id: `${orderId}-${nextStatus}-${Date.now()}`, action: 'updateOrderStatus', payload: { order_id: orderId, status: nextStatus, updated_at: updatedAt }, attempts: 0, created_at: updatedAt });
+  enqueueSyncJob({ id: `${orderId}-${nextStatus}-${Date.now()}`, action: 'updateOrderStatus', payload: { order_id: orderId, status: nextStatus, updated_at: updatedAt }, created_at: updatedAt });
   saveState();
   render();
   flushSyncQueue();
@@ -1479,11 +1627,10 @@ async function deleteOrder(orderId) {
 
   const shouldDeleteRemote = Boolean(state.settings.appsScriptUrl && !hadPendingCreate);
   if (shouldDeleteRemote) {
-    state.syncQueue.unshift({
+    enqueueSyncJob({
       id: `${orderId}-delete-${Date.now()}`,
       action: 'deleteOrder',
       payload: { order_id: orderId },
-      attempts: 0,
       created_at: nowIso()
     });
   }
@@ -1523,6 +1670,69 @@ async function apiCall(action, payload = {}) {
   return data;
 }
 
+function markSyncJobSucceeded(job) {
+  if (job.action === 'createOrder') {
+    const order = state.orders.find((entry) => entry.order_id === job.payload?.order?.order_id);
+    if (order) order.sync_status = 'synced';
+  }
+  if (job.action === 'updateOrderStatus') {
+    const order = state.orders.find((entry) => entry.order_id === job.payload?.order_id);
+    if (order) order.sync_status = 'synced';
+  }
+}
+
+function markSyncJobFailed(job, error) {
+  const attempts = (job.attempts || 0) + 1;
+  const blocked = attempts >= SYNC_MAX_ATTEMPTS;
+  return {
+    ...job,
+    attempts,
+    blocked,
+    last_error: error.message || String(error),
+    last_attempt_at: nowIso(),
+    next_retry_at: blocked ? '' : new Date(Date.now() + syncRetryDelay(attempts)).toISOString()
+  };
+}
+
+function reconcileSyncQueueWithSheet(remoteOrders = [], remoteInventory = []) {
+  if (!state.syncQueue.length) return 0;
+  const ordersById = new Map(remoteOrders.filter((order) => order?.order_id).map((order) => [order.order_id, normalizeSheetOrder(order)]));
+  const inventoryById = new Map(remoteInventory.filter((item) => item?.item_id).map((item) => [item.item_id, item]));
+  const before = state.syncQueue.length;
+
+  state.syncQueue = state.syncQueue.filter((job) => {
+    if (job.action === 'createOrder') {
+      const remote = ordersById.get(syncJobOrderId(job));
+      if (!remote) return true;
+      markSyncJobSucceeded(job);
+      return false;
+    }
+
+    if (job.action === 'updateOrderStatus') {
+      const remote = ordersById.get(syncJobOrderId(job));
+      if (!remote) return true;
+      if (normalizeOrderStatus(remote.status) !== normalizeOrderStatus(job.payload?.status)) return true;
+      markSyncJobSucceeded(job);
+      return false;
+    }
+
+    if (job.action === 'upsertInventory') {
+      const remote = inventoryById.get(syncJobInventoryId(job));
+      const local = job.payload?.inventory;
+      if (!remote || !local) return true;
+      const sameStock = numberValue(remote.on_hand) === numberValue(local.on_hand);
+      const sameReorder = numberValue(remote.reorder_level) === numberValue(local.reorder_level);
+      const sameCost = numberValue(remote.cost_per_unit) === numberValue(local.cost_per_unit);
+      return !(sameStock && sameReorder && sameCost);
+    }
+
+    return true;
+  });
+
+  compactSyncQueue();
+  return before - state.syncQueue.length;
+}
+
 async function flushSyncQueue(options = {}) {
   const { silent = false, successMessage = 'Sync กับ Google Sheet แล้ว' } = options;
   if (isFlushingSync) return;
@@ -1560,6 +1770,58 @@ async function flushSyncQueue(options = {}) {
     updateSyncUi();
   }
 }
+
+async function flushSyncQueueStable(options = {}) {
+  const { silent = false, successMessage = 'Sync complete' } = options;
+  if (isFlushingSync) return;
+  compactSyncQueue();
+  if (!state.settings.appsScriptUrl || !state.syncQueue.length) {
+    updateSyncUi();
+    return;
+  }
+
+  isFlushingSync = true;
+  setSyncBadge('Syncing...', 'online');
+
+  try {
+    const now = Date.now();
+    const readyJobs = state.syncQueue.filter((job) => syncJobIsReady(job, now)).slice(0, SYNC_BATCH_SIZE);
+    const deferredJobs = state.syncQueue.filter((job) => !readyJobs.includes(job));
+    const failedJobs = [];
+
+    if (!readyJobs.length) {
+      if (!silent) showToast('Sync queue is waiting for retry window');
+      return;
+    }
+
+    for (const job of readyJobs) {
+      try {
+        await apiCall(job.action, job.payload);
+        markSyncJobSucceeded(job);
+      } catch (error) {
+        failedJobs.push(markSyncJobFailed(job, error));
+      }
+    }
+
+    state.syncQueue = [...failedJobs, ...deferredJobs];
+    compactSyncQueue();
+    saveState();
+    render();
+
+    if (!silent) {
+      if (state.syncQueue.length) {
+        showToast(`ยังมี ${state.syncQueue.length} รายการรอ Sync`, failedJobs.length ? 'error' : 'default');
+      } else {
+        showToast(successMessage);
+      }
+    }
+  } finally {
+    isFlushingSync = false;
+    updateSyncUi();
+  }
+}
+
+flushSyncQueue = flushSyncQueueStable;
 
 function hasPendingOrderMutation(orderId) {
   return state.syncQueue.some((job) => (
@@ -1616,6 +1878,7 @@ async function reloadFromSheet(options = {}) {
     if (Array.isArray(data.menu) && data.menu.length) state.menu = normalizeMenu(data.menu);
     if (Array.isArray(data.addOns) && data.addOns.length) state.addons = normalizeAddons(data.addOns);
     if (Array.isArray(data.inventory) && data.inventory.length) state.inventory = normalizeInventory(data.inventory);
+    reconcileSyncQueueWithSheet(Array.isArray(data.orders) ? data.orders : [], Array.isArray(data.inventory) ? data.inventory : []);
     let newOrders = [];
     if (Array.isArray(data.orders)) {
       newOrders = mergeOrdersFromSheet(data.orders).filter((order) => !knownBefore.has(order.order_id) && normalizeOrderStatus(order.status) === 'new');
@@ -1627,6 +1890,29 @@ async function reloadFromSheet(options = {}) {
   } catch (error) {
     if (!silent) showToast(error.message, 'error');
     updateSyncUi();
+  }
+}
+
+async function retrySyncQueueNow() {
+  state.syncQueue = state.syncQueue.map((job) => ({
+    ...job,
+    blocked: false,
+    next_retry_at: ''
+  }));
+  saveState();
+  render();
+  await flushSyncQueue({ successMessage: 'Retry sync complete' });
+}
+
+async function cleanResolvedSyncQueue() {
+  try {
+    const data = await apiCall('bootstrap', {});
+    const removed = reconcileSyncQueueWithSheet(Array.isArray(data.orders) ? data.orders : [], Array.isArray(data.inventory) ? data.inventory : []);
+    saveState();
+    render();
+    showToast(removed > 0 ? `Cleaned ${removed} resolved sync jobs` : 'No resolved sync jobs found');
+  } catch (error) {
+    showToast(error.message, 'error');
   }
 }
 
@@ -1672,11 +1958,10 @@ async function saveInventoryItem(itemId) {
 
   state.syncQueue = state.syncQueue.filter((job) => !(job.action === 'upsertInventory' && job.payload?.inventory?.item_id === itemId));
   if (state.settings.appsScriptUrl) {
-    state.syncQueue.push({
+    enqueueSyncJob({
       id: `${itemId}-inventory-${Date.now()}`,
       action: 'upsertInventory',
       payload: { inventory: item },
-      attempts: 0,
       created_at: nowIso()
     });
   }
@@ -1825,6 +2110,8 @@ function bindEvents() {
     if (button) saveInventoryItem(button.dataset.saveInventory);
   });
   document.getElementById('reloadSheetButton').addEventListener('click', reloadFromSheet);
+  document.getElementById('retrySyncQueueButton')?.addEventListener('click', retrySyncQueueNow);
+  document.getElementById('cleanSyncQueueButton')?.addEventListener('click', cleanResolvedSyncQueue);
   document.getElementById('salesReportButton').addEventListener('click', openSalesReport);
   document.getElementById('closeSalesReportButton').addEventListener('click', closeSalesReport);
   document.getElementById('salesReportModal').addEventListener('click', (event) => {
