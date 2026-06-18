@@ -1227,7 +1227,7 @@ function renderClearHistoryCount() {
   const count = document.getElementById('clearHistoryCount');
   if (!count) return;
   const historyCount = state.clearHistory.length;
-  count.textContent = historyCount ? `${historyCount} รอบ` : 'History';
+  count.textContent = `${historyCount} รอบ`;
 }
 
 function renderClearDataSummary() {
