@@ -1264,6 +1264,19 @@ textarea:focus {
   overflow-wrap: anywhere;
 }
 
+.sync-help-text {
+  margin: 0;
+  border: 1px solid rgba(244, 188, 69, 0.36);
+  border-radius: 14px;
+  background: rgba(244, 188, 69, 0.14);
+  color: var(--soy);
+  padding: 10px 11px;
+  font-size: 0.82rem;
+  font-weight: 900;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
 .order-row {
   align-items: flex-start;
 }

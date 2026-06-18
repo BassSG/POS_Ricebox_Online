@@ -620,6 +620,25 @@ function syncJobDetail(job) {
   return job.id || '';
 }
 
+function syncJobErrorHint(job) {
+  const error = String(job.last_error || '');
+  const unknownArchiveAction = job.action === 'archiveClearOrders' && error.includes('Unknown action');
+  const unknownRestoreAction = job.action === 'restoreClearHistory' && error.includes('Unknown action');
+  if (unknownArchiveAction || unknownRestoreAction) {
+    return 'สาเหตุ: Google Apps Script ยังเป็นเวอร์ชันเก่า ให้เปิด Apps Script แล้ว Deploy เป็น New version จากนั้นกลับมากด “ลอง Sync อีกครั้ง”';
+  }
+  if (error.includes('Failed to fetch') || error.includes('NetworkError')) {
+    return 'ตรวจสอบอินเทอร์เน็ตหรือสิทธิ์ Web App แล้วกด “ลอง Sync อีกครั้ง” ข้อมูลยังไม่หายจากเครื่องนี้';
+  }
+  return '';
+}
+
+function syncJobStatusText(job) {
+  if (job.blocked) return 'หยุดรอแก้';
+  if (job.next_retry_at && !syncJobIsReady(job)) return `ลองอีก ${orderTimeLabel({ created_at: job.next_retry_at })}`;
+  return 'พร้อมส่ง';
+}
+
 function compactSyncQueue() {
   const latestByKey = new Map();
   const result = [];
@@ -1995,16 +2014,16 @@ function renderSyncQueueStable() {
   const list = document.getElementById('syncQueueList');
   if (!queueCount || !summary || !list) return;
 
-  queueCount.textContent = `${state.syncQueue.length} pending`;
+  queueCount.textContent = `รอ Sync ${state.syncQueue.length}`;
   summary.innerHTML = state.syncQueue.length
     ? `
       <div class="sync-summary-strip">
-        <span>Ready ${readyCount}</span>
-        <span>Waiting ${waitingCount}</span>
-        <span class="${blockedCount ? 'is-danger' : ''}">Blocked ${blockedCount}</span>
+        <span>พร้อมส่ง ${readyCount}</span>
+        <span>รอเวลา ${waitingCount}</span>
+        <span class="${blockedCount ? 'is-danger' : ''}">ติดปัญหา ${blockedCount}</span>
       </div>
     `
-    : '<p class="muted">Sync queue is clear.</p>';
+    : '<p class="muted">ไม่มีคิว Sync ค้าง</p>';
 
   list.innerHTML = state.syncQueue.length
     ? state.syncQueue.slice(0, 30).map((job) => `
@@ -2014,14 +2033,14 @@ function renderSyncQueueStable() {
           <p class="muted">${escapeHtml(syncJobDetail(job))}</p>
         </div>
         <div class="sync-row-meta">
-          <span>attempts ${job.attempts || 0}</span>
-          ${job.next_retry_at && !job.blocked ? `<span>retry ${escapeHtml(orderTimeLabel({ created_at: job.next_retry_at }))}</span>` : ''}
-          ${job.blocked ? '<span class="sync-error-text">blocked</span>' : ''}
+          <span>ลองแล้ว ${job.attempts || 0} ครั้ง</span>
+          <span>${escapeHtml(syncJobStatusText(job))}</span>
         </div>
         ${job.last_error ? `<p class="sync-error-text">${escapeHtml(job.last_error)}</p>` : ''}
+        ${syncJobErrorHint(job) ? `<p class="sync-help-text">${escapeHtml(syncJobErrorHint(job))}</p>` : ''}
       </article>
     `).join('')
-    : '<div class="empty-state">No pending sync jobs</div>';
+    : '<div class="empty-state">ไม่มีรายการค้าง Sync</div>';
 }
 
 function renderSettings() {
@@ -2040,7 +2059,7 @@ function updateSyncUi() {
     setSyncBadge(`${blockedCount} blocked`, 'error');
     return;
   }
-  setSyncBadge(state.syncQueue.length ? `${state.syncQueue.length} pending` : 'Sheet ready', state.syncQueue.length ? 'error' : 'online');
+  setSyncBadge(state.syncQueue.length ? `${state.syncQueue.length} รอ Sync` : 'Sheet ready', state.syncQueue.length ? 'error' : 'online');
 }
 
 function focusCartOnMobile() {
