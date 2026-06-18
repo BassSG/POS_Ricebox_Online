@@ -106,6 +106,7 @@ let notificationBeepUrl = '';
 let notificationSoundEnabled = localStorage.getItem(SOUND_ENABLED_KEY) === 'true';
 let notificationSoundUnlocked = false;
 let lastNotificationSoundAt = 0;
+let quickAddonSelections = {};
 
 const UI_CLOCK_INTERVAL_MS = 30000;
 const SHEET_POLL_INTERVAL_MS = 20000;
@@ -421,6 +422,38 @@ function cartSubtotal(cart = state.cart) {
 function lineTotal(item) {
   const addonTotal = item.addons.reduce((sum, addon) => sum + numberValue(addon.price), 0);
   return item.qty * (numberValue(item.unit_price) + addonTotal);
+}
+
+function menuCartQuantity(menuId) {
+  return state.cart.items
+    .filter((item) => item.menu_id === menuId)
+    .reduce((sum, item) => sum + numberValue(item.qty), 0);
+}
+
+function quickAddonsForMenu(menuId) {
+  const ids = quickAddonSelections[menuId] || [];
+  return ids
+    .map((addonId) => state.addons.find((addon) => addon.addon_id === addonId && addon.active))
+    .filter(Boolean);
+}
+
+function menuLineSignature(menuId, addons = []) {
+  const addonIds = addons.map((addon) => addon.addon_id).sort().join('|');
+  return `${menuId}::${addonIds}`;
+}
+
+function toggleQuickAddon(menuId, addonId) {
+  const selected = new Set(quickAddonSelections[menuId] || []);
+  if (selected.has(addonId)) {
+    selected.delete(addonId);
+  } else {
+    selected.add(addonId);
+  }
+  quickAddonSelections = {
+    ...quickAddonSelections,
+    [menuId]: [...selected]
+  };
+  renderMenuModern();
 }
 
 function lineCost(item) {
@@ -813,7 +846,7 @@ function render() {
   document.querySelectorAll('.view-tab').forEach((tab) => tab.classList.toggle('is-active', tab.dataset.view === activeView));
   if (activeView === 'pos') {
     renderToday();
-    renderMenu();
+    renderMenuModern();
     renderCart();
   }
   if (activeView === 'backoffice') renderBackoffice();
@@ -854,6 +887,45 @@ function renderMenu() {
           </span>
         </span>
       </button>
+    `;
+  }).join('');
+  document.getElementById('addonPreview').innerHTML = state.addons.filter((item) => item.active).map((addon) => `
+    <span class="addon-chip">${escapeHtml(addon.name)} +${numberValue(addon.price).toLocaleString('th-TH')}</span>
+  `).join('');
+  document.querySelectorAll('.filter-pill').forEach((button) => button.classList.toggle('is-active', button.dataset.category === activeCategory));
+}
+
+function renderMenuModern() {
+  const menu = state.menu.filter((item) => item.active && (activeCategory === 'all' || item.category === activeCategory || activeCategory === 'favorite'));
+  const quickAddons = state.addons.filter((addon) => addon.active).slice(0, 4);
+  document.getElementById('menuGrid').innerHTML = menu.map((item) => {
+    const image = item.image || MENU_IMAGES_BY_ID[item.menu_id] || '';
+    const qtyInCart = menuCartQuantity(item.menu_id);
+    const selectedIds = new Set(quickAddonSelections[item.menu_id] || []);
+    const imageMarkup = image
+      ? `<img class="menu-photo" src="${escapeHtml(image)}" alt="${escapeHtml(item.name)}" loading="eager" decoding="async">`
+      : `<span class="food-icon">${escapeHtml(item.image_hint || 'RB')}</span>`;
+    const quickAddonMarkup = quickAddons.map((addon) => {
+      const active = selectedIds.has(addon.addon_id);
+      return `<button type="button" class="menu-addon-toggle ${active ? 'is-active' : ''}" data-menu-id="${escapeHtml(item.menu_id)}" data-quick-addon="${escapeHtml(addon.addon_id)}">${active ? '✓ ' : ''}${escapeHtml(addon.name)}${addon.price ? ` +${addon.price}` : ''}</button>`;
+    }).join('');
+    return `
+      <article class="menu-card ${qtyInCart ? 'has-cart-qty' : ''}" data-menu-id="${escapeHtml(item.menu_id)}">
+        <span class="menu-photo-wrap">
+          ${imageMarkup}
+          <span class="menu-hot-badge">ขายดี</span>
+          ${qtyInCart ? `<span class="menu-count-badge">+${qtyInCart}</span>` : ''}
+        </span>
+        <span class="menu-card-body">
+          <strong>${escapeHtml(item.name)}</strong>
+          <span class="menu-card-description">${escapeHtml(item.description)}</span>
+          <span class="menu-addon-row">${quickAddonMarkup}</span>
+          <span class="menu-card-footer">
+            <span class="price">${baht(item.base_price)}</span>
+            <button type="button" class="add-button" data-add-menu="${escapeHtml(item.menu_id)}" aria-label="Add ${escapeHtml(item.name)}">+</button>
+          </span>
+        </span>
+      </article>
     `;
   }).join('');
   document.getElementById('addonPreview').innerHTML = state.addons.filter((item) => item.active).map((addon) => `
@@ -1524,17 +1596,24 @@ function focusCartOnMobile() {
 function addMenuToCart(menuId) {
   const menu = state.menu.find((item) => item.menu_id === menuId);
   if (!menu) return;
+  const selectedAddons = quickAddonsForMenu(menuId);
+  const signature = menuLineSignature(menuId, selectedAddons);
+  const existingLine = state.cart.items.find((item) => item.note === '' && menuLineSignature(item.menu_id, item.addons) === signature);
   if (!state.cart.queue_no) state.cart.queue_no = queueNo();
-  state.cart.items.push({
-    line_id: `line-${Date.now()}-${Math.random().toString(16).slice(2, 6)}`,
-    menu_id: menu.menu_id,
-    menu_name: menu.name,
-    qty: 1,
-    unit_price: menu.base_price,
-    cost_estimate: menu.cost_estimate,
-    addons: [],
-    note: ''
-  });
+  if (existingLine) {
+    existingLine.qty += 1;
+  } else {
+    state.cart.items.push({
+      line_id: `line-${Date.now()}-${Math.random().toString(16).slice(2, 6)}`,
+      menu_id: menu.menu_id,
+      menu_name: menu.name,
+      qty: 1,
+      unit_price: menu.base_price,
+      cost_estimate: menu.cost_estimate,
+      addons: selectedAddons,
+      note: ''
+    });
+  }
   saveState();
   render();
   focusCartOnMobile();
@@ -1552,12 +1631,66 @@ function updateCartFromInputs() {
   renderCart();
 }
 
-async function saveOrder() {
+function renderOrderConfirmContent() {
+  const channel = channelMeta(state.cart.channel);
+  const rows = state.cart.items.map((item) => {
+    const addons = item.addons.length
+      ? item.addons.map((addon) => `${addon.name}${addon.price ? ` +${addon.price}` : ''}`).join(', ')
+      : 'ไม่มี Add-on';
+    return `
+      <article class="confirm-line">
+        <div>
+          <strong>${numberValue(item.qty) || 1}x ${escapeHtml(item.menu_name)}</strong>
+          <p>${escapeHtml(addons)}</p>
+          ${item.note ? `<p class="sync-error-text">Note: ${escapeHtml(item.note)}</p>` : ''}
+        </div>
+        <span>${baht(lineTotal(item))}</span>
+      </article>
+    `;
+  }).join('');
+
+  document.getElementById('orderConfirmContent').innerHTML = `
+    <div class="confirm-meta-grid">
+      <div><span>คิว</span><strong>${escapeHtml(state.cart.queue_no || queueNo())}</strong></div>
+      <div><span>ช่องทาง</span><strong>${escapeHtml(channel.label)}</strong></div>
+      <div><span>ชำระเงิน</span><strong>${escapeHtml(paymentLabel(state.cart.payment_method))}</strong></div>
+    </div>
+    <div class="confirm-lines">${rows}</div>
+    ${(state.cart.customer_name || state.cart.customer_phone || state.cart.notes) ? `
+      <div class="confirm-note-box">
+        ${state.cart.customer_name ? `<p><strong>ลูกค้า:</strong> ${escapeHtml(state.cart.customer_name)}</p>` : ''}
+        ${state.cart.customer_phone ? `<p><strong>โทร:</strong> ${escapeHtml(state.cart.customer_phone)}</p>` : ''}
+        ${state.cart.notes ? `<p><strong>หมายเหตุ:</strong> ${escapeHtml(state.cart.notes)}</p>` : ''}
+      </div>
+    ` : ''}
+    <div class="confirm-total-box">
+      <div><span>Subtotal</span><strong>${baht(cartSubtotal())}</strong></div>
+      <div><span>Discount</span><strong>${baht(state.cart.discount || 0)}</strong></div>
+      <div class="grand-total"><span>Total</span><strong>${baht(orderTotal())}</strong></div>
+    </div>
+  `;
+}
+
+function openOrderConfirm() {
+  renderOrderConfirmContent();
+  document.getElementById('orderConfirmModal').classList.remove('hidden');
+}
+
+function closeOrderConfirm() {
+  document.getElementById('orderConfirmModal').classList.add('hidden');
+}
+
+async function saveOrder(options = {}) {
   updateCartFromInputs();
   if (!state.cart.items.length) {
     showToast('ยังไม่มีรายการอาหารในบิล', 'error');
     return;
   }
+  if (!options.confirmed) {
+    openOrderConfirm();
+    return;
+  }
+  closeOrderConfirm();
   const createdAt = nowIso();
   const order = {
     ...state.cart,
@@ -1573,6 +1706,7 @@ async function saveOrder() {
   state.orders.unshift(order);
   enqueueSyncJob({ id: order.order_id, action: 'createOrder', payload: { order }, created_at: createdAt });
   state.cart = freshCart();
+  quickAddonSelections = {};
   saveState();
   render();
   if (state.settings.appsScriptUrl) {
@@ -1585,6 +1719,7 @@ async function saveOrder() {
 
 function resetCart() {
   state.cart = freshCart();
+  quickAddonSelections = {};
   saveState();
   render();
 }
@@ -2049,10 +2184,21 @@ function bindEvents() {
   document.querySelectorAll('.filter-pill').forEach((button) => {
     button.addEventListener('click', () => {
       activeCategory = button.dataset.category;
-      renderMenu();
+      renderMenuModern();
     });
   });
   document.getElementById('menuGrid').addEventListener('click', (event) => {
+    const quickAddon = event.target.closest('[data-quick-addon]');
+    if (quickAddon) {
+      event.stopPropagation();
+      toggleQuickAddon(quickAddon.dataset.menuId, quickAddon.dataset.quickAddon);
+      return;
+    }
+    const addButton = event.target.closest('[data-add-menu]');
+    if (addButton) {
+      addMenuToCart(addButton.dataset.addMenu);
+      return;
+    }
     const card = event.target.closest('[data-menu-id]');
     if (card) addMenuToCart(card.dataset.menuId);
   });
@@ -2085,6 +2231,12 @@ function bindEvents() {
     saveState();
   });
   document.getElementById('saveOrderButton').addEventListener('click', saveOrder);
+  document.getElementById('confirmSaveOrderButton').addEventListener('click', () => saveOrder({ confirmed: true }));
+  document.getElementById('closeOrderConfirmButton').addEventListener('click', closeOrderConfirm);
+  document.getElementById('editOrderConfirmButton').addEventListener('click', closeOrderConfirm);
+  document.getElementById('orderConfirmModal').addEventListener('click', (event) => {
+    if (event.target.id === 'orderConfirmModal') closeOrderConfirm();
+  });
   document.getElementById('clearCartButton').addEventListener('click', resetCart);
   document.getElementById('newOrderButton').addEventListener('click', resetCart);
   document.getElementById('orderFilter').addEventListener('change', renderOrdersBoard);
@@ -2124,6 +2276,7 @@ function bindEvents() {
   });
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') {
+      closeOrderConfirm();
       closeSalesReport();
       hideNewOrderAlert();
     }
