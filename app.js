@@ -257,6 +257,20 @@ function normalizeClearHistory(rows) {
     .sort((a, b) => (dateValue(b.cleared_at)?.getTime() || 0) - (dateValue(a.cleared_at)?.getTime() || 0));
 }
 
+function clearHistoryStatus(entry) {
+  return entry?.sync_status || 'synced';
+}
+
+function sheetClearHistory() {
+  if (!state.settings.appsScriptUrl) return state.clearHistory;
+  return state.clearHistory.filter((entry) => clearHistoryStatus(entry) === 'synced');
+}
+
+function pendingClearHistory() {
+  if (!state.settings.appsScriptUrl) return [];
+  return state.clearHistory.filter((entry) => clearHistoryStatus(entry) !== 'synced');
+}
+
 function booleanValue(value) {
   if (typeof value === 'boolean') return value;
   return String(value).toUpperCase() !== 'FALSE';
@@ -1248,8 +1262,9 @@ function closeSalesReport() {
 function renderClearHistoryCount() {
   const count = document.getElementById('clearHistoryCount');
   if (!count) return;
-  const historyCount = state.clearHistory.length;
-  count.textContent = `${historyCount} รอบ`;
+  const sheetCount = sheetClearHistory().length;
+  const pendingCount = pendingClearHistory().length;
+  count.textContent = pendingCount ? `${sheetCount} รอบ · รอ ${pendingCount}` : `${sheetCount} รอบ`;
 }
 
 function renderClearDataSummary() {
@@ -1338,9 +1353,13 @@ function closeClearProgressModal() {
   document.getElementById('clearProgressModal')?.classList.remove('is-error');
 }
 
-function openClearHistoryModal() {
-  renderClearHistoryList();
+async function openClearHistoryModal() {
+  renderClearHistoryList({ loading: Boolean(state.settings.appsScriptUrl) });
   document.getElementById('clearHistoryModal').classList.remove('hidden');
+  if (state.settings.appsScriptUrl) {
+    await reloadFromSheet({ silent: true, notifyNew: false });
+  }
+  renderClearHistoryList();
 }
 
 function closeClearHistoryModal() {
@@ -1475,24 +1494,69 @@ async function confirmClearData() {
   }
 }
 
-function renderClearHistoryList() {
+function renderHistoryRows(rows, emptyText) {
+  if (!rows.length) return `<div class="empty-state">${emptyText}</div>`;
+  return rows.map((archive) => `
+    <article class="history-row ${archive.restored_at ? 'is-restored' : ''}">
+      <div class="history-main">
+        <strong>${escapeHtml(archive.name)}</strong>
+        <span>${new Date(archive.cleared_at).toLocaleString('th-TH')} · ${archive.order_count || 0} orders · ${archive.box_count || 0} กล่อง · ${baht(archive.gross_sales)}</span>
+        ${archive.restored_at ? `<p class="muted">กู้คืนแล้ว ${new Date(archive.restored_at).toLocaleString('th-TH')}</p>` : '<p class="muted">พร้อมกู้คืนกลับเข้าหลังบ้าน</p>'}
+      </div>
+      <div class="history-actions">
+        <span class="status-chip ${clearHistoryStatus(archive) === 'pending' ? 'is-active' : ''}">${escapeHtml(clearHistoryStatus(archive))}</span>
+        <button type="button" class="secondary-button" data-restore-history="${escapeHtml(archive.archive_id)}">กู้คืน</button>
+      </div>
+    </article>
+  `).join('');
+}
+
+function renderClearHistoryList(options = {}) {
   const list = document.getElementById('clearHistoryList');
   if (!list) return;
-  list.innerHTML = state.clearHistory.length
-    ? state.clearHistory.map((archive) => `
-      <article class="history-row ${archive.restored_at ? 'is-restored' : ''}">
-        <div class="history-main">
-          <strong>${escapeHtml(archive.name)}</strong>
-          <span>${new Date(archive.cleared_at).toLocaleString('th-TH')} · ${archive.order_count || 0} orders · ${archive.box_count || 0} กล่อง · ${baht(archive.gross_sales)}</span>
-          ${archive.restored_at ? `<p class="muted">กู้คืนแล้ว ${new Date(archive.restored_at).toLocaleString('th-TH')}</p>` : '<p class="muted">พร้อมกู้คืนกลับเข้าหลังบ้าน</p>'}
+  if (options.loading) {
+    list.innerHTML = `
+      <div class="history-source-note">
+        <strong>กำลังโหลด History จาก Google Sheet</strong>
+        <span>ระบบจะใช้ Sheet เป็นข้อมูลกลาง เพื่อให้มือถือ แท็บเล็ต และคอมเห็นตรงกัน</span>
+      </div>
+    `;
+    renderClearHistoryCount();
+    return;
+  }
+
+  const sheetHistory = sheetClearHistory();
+  const pendingHistory = pendingClearHistory();
+  const usingSheet = Boolean(state.settings.appsScriptUrl);
+
+  if (!usingSheet) {
+    list.innerHTML = renderHistoryRows(state.clearHistory, 'ยังไม่มี History ที่ถูกล้างในเครื่องนี้');
+    renderClearHistoryCount();
+    return;
+  }
+
+  list.innerHTML = `
+    <div class="history-source-note">
+      <strong>History ใน Google Sheet คือข้อมูลหลัก</strong>
+      <span>ตัวเลข History จะนับเฉพาะรายการที่อยู่ใน Sheet แล้ว เพื่อให้ทุกเครื่องเห็นเท่ากัน</span>
+    </div>
+    <section class="history-section">
+      <div class="history-section-head">
+        <strong>History ใน Sheet</strong>
+        <span>${sheetHistory.length.toLocaleString('th-TH')} รอบ</span>
+      </div>
+      ${renderHistoryRows(sheetHistory, 'ยังไม่มี History ใน Google Sheet')}
+    </section>
+    ${pendingHistory.length ? `
+      <section class="history-section is-pending">
+        <div class="history-section-head">
+          <strong>รอ Sync จากเครื่องนี้</strong>
+          <span>${pendingHistory.length.toLocaleString('th-TH')} รายการ</span>
         </div>
-        <div class="history-actions">
-          <span class="status-chip ${archive.sync_status === 'pending' ? 'is-active' : ''}">${escapeHtml(archive.sync_status || 'synced')}</span>
-          <button type="button" class="secondary-button" data-restore-history="${escapeHtml(archive.archive_id)}">กู้คืน</button>
-        </div>
-      </article>
-    `).join('')
-    : '<div class="empty-state">ยังไม่มี History ที่ถูกล้าง</div>';
+        ${renderHistoryRows(pendingHistory, 'ไม่มีรายการรอ Sync')}
+      </section>
+    ` : ''}
+  `;
   renderClearHistoryCount();
 }
 
@@ -2427,19 +2491,19 @@ function mergeOrdersFromSheet(orders) {
 
 function mergeClearHistoryFromSheet(historyRows = []) {
   const localById = new Map(state.clearHistory.map((entry) => [entry.archive_id, entry]));
-  normalizeClearHistory(historyRows).forEach((remote) => {
+  const remoteHistory = normalizeClearHistory(historyRows).map((remote) => {
     const local = localById.get(remote.archive_id);
-    if (!local) {
-      state.clearHistory.push(remote);
-      return;
-    }
-    Object.assign(local, {
+    return {
       ...remote,
-      orders: remote.orders.length ? remote.orders : local.orders,
+      orders: remote.orders.length ? remote.orders : (local?.orders || []),
       sync_status: 'synced'
-    });
+    };
   });
-  state.clearHistory = normalizeClearHistory(state.clearHistory).slice(0, 60);
+  const remoteIds = new Set(remoteHistory.map((entry) => entry.archive_id));
+  const localPendingHistory = state.clearHistory.filter((entry) => (
+    clearHistoryStatus(entry) !== 'synced' && !remoteIds.has(entry.archive_id)
+  ));
+  state.clearHistory = normalizeClearHistory([...remoteHistory, ...localPendingHistory]).slice(0, 60);
 }
 
 async function reloadFromSheet(options = {}) {
@@ -2484,6 +2548,7 @@ async function retrySyncQueueNow() {
 async function cleanResolvedSyncQueue() {
   try {
     const data = await apiCall('bootstrap', {});
+    if (Array.isArray(data.clearHistory)) mergeClearHistoryFromSheet(data.clearHistory);
     const removed = reconcileSyncQueueWithSheet(
       Array.isArray(data.orders) ? data.orders : [],
       Array.isArray(data.inventory) ? data.inventory : [],

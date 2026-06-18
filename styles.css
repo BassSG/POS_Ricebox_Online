@@ -1708,11 +1708,61 @@ code {
   gap: 10px;
 }
 
+.history-source-note,
+.history-section {
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.72);
+  padding: 12px;
+}
+
+.history-source-note {
+  display: grid;
+  gap: 3px;
+  background: color-mix(in srgb, var(--cream) 72%, #fff);
+}
+
+.history-source-note strong,
+.history-section-head strong {
+  color: var(--ink);
+  font-size: 0.98rem;
+  font-weight: 1000;
+}
+
+.history-source-note span,
+.history-section-head span {
+  color: var(--soy);
+  font-size: 0.82rem;
+  font-weight: 850;
+  line-height: 1.45;
+}
+
+.history-section {
+  display: grid;
+  gap: 10px;
+}
+
+.history-section.is-pending {
+  border-color: rgba(189, 63, 42, 0.25);
+  background: rgba(189, 63, 42, 0.06);
+}
+
+.history-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
 .history-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 14px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #fff;
+  padding: 12px;
 }
 
 .history-row.is-restored {
