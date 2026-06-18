@@ -125,9 +125,12 @@ const SYNC_RETRY_MAX_MS = 300000;
 function loadState() {
   const saved = readJson(STORAGE_KEY, {});
   const savedAppsScriptUrl = saved.settings?.appsScriptUrl || '';
-  const appsScriptUrl = LEGACY_APPS_SCRIPT_URLS.includes(savedAppsScriptUrl)
-    ? CONFIG.appsScriptUrl
-    : savedAppsScriptUrl || CONFIG.appsScriptUrl || '';
+  const shouldMigrateAppsScriptUrl = LEGACY_APPS_SCRIPT_URLS.includes(savedAppsScriptUrl) && CONFIG.appsScriptUrl;
+  const appsScriptUrl = shouldMigrateAppsScriptUrl ? CONFIG.appsScriptUrl : savedAppsScriptUrl || CONFIG.appsScriptUrl || '';
+  if (shouldMigrateAppsScriptUrl) {
+    saved.settings = { ...(saved.settings || {}), appsScriptUrl };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(saved));
+  }
   return {
     menu: normalizeMenu(saved.menu || DEFAULT_MENU),
     addons: normalizeAddons(saved.addons || DEFAULT_ADDONS),
