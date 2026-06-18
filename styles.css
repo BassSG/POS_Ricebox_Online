@@ -1757,6 +1757,89 @@ code {
   font-weight: 800;
 }
 
+.clear-progress-modal {
+  justify-items: stretch;
+  width: min(560px, 100%);
+  text-align: left;
+}
+
+.clear-progress-icon {
+  display: grid;
+  width: 58px;
+  height: 58px;
+  place-items: center;
+  border-radius: 18px;
+  background: var(--ink);
+  color: var(--wok);
+  font-size: 1.25rem;
+  font-weight: 1000;
+}
+
+.clear-progress-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.clear-progress-meta span {
+  border-radius: 999px;
+  background: var(--cream);
+  color: var(--soy);
+  padding: 7px 10px;
+  font-size: 0.8rem;
+  font-weight: 1000;
+}
+
+.clear-progress-track {
+  height: 14px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(239, 226, 203, 0.9);
+}
+
+.clear-progress-track span {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--chili), var(--wok));
+  transition: width 280ms ease;
+}
+
+.clear-progress-copy {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 14px;
+}
+
+.clear-progress-copy > strong {
+  display: grid;
+  width: 74px;
+  height: 74px;
+  place-items: center;
+  border-radius: 22px;
+  background: color-mix(in srgb, var(--wok) 22%, #fff);
+  color: var(--ink);
+  font-size: 1.35rem;
+}
+
+.clear-progress-copy h3,
+.clear-progress-copy p {
+  margin: 0;
+}
+
+.clear-progress-copy p {
+  margin-top: 4px;
+  color: var(--soy);
+  font-weight: 800;
+  line-height: 1.5;
+}
+
+.clear-progress-modal.is-error .clear-progress-track span {
+  background: linear-gradient(90deg, var(--chili), #7a2518);
+}
+
 .order-confirm-content {
   display: grid;
   gap: 12px;
@@ -2191,7 +2274,6 @@ code {
 
   .view-tabs,
   .topbar-actions,
-  .backoffice-actions,
   .section-heading,
   .quick-add-panel,
   .cart-head,
@@ -2207,6 +2289,28 @@ code {
 
   .sound-toggle-button {
     width: 100%;
+  }
+
+  .backoffice-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 9px;
+  }
+
+  .backoffice-actions .primary-button,
+  .backoffice-actions .secondary-button,
+  .backoffice-actions .danger-button {
+    min-height: 58px;
+    border-radius: 18px;
+    padding: 0 10px;
+    font-size: 0.92rem;
+    line-height: 1.15;
+    box-shadow: 0 10px 22px rgba(33, 22, 15, 0.1);
+  }
+
+  .backoffice-actions button span {
+    padding: 3px 7px;
+    font-size: 0.7rem;
   }
 
   .menu-grid,
@@ -2343,15 +2447,14 @@ code {
   }
 
   .summary-grid {
-    display: flex;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 10px;
-    max-width: 100%;
-    overflow-x: auto;
-    padding-bottom: 2px;
+    overflow: visible;
+    padding-bottom: 0;
   }
 
   .summary-card {
-    flex: 0 0 150px;
     border-radius: 16px;
     padding: 12px;
   }

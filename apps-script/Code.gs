@@ -289,12 +289,12 @@ function archiveClearOrders_(payload, request) {
 
   upsertClearHistory_(rowObject);
 
-  const deleted = { payments: 0, orderItems: 0, orders: 0 };
-  orderIds.forEach((orderId) => {
-    deleted.payments += deleteRowsByKey_('Payments', 'order_id', orderId);
-    deleted.orderItems += deleteRowsByKey_('OrderItems', 'order_id', orderId);
-    deleted.orders += deleteRowsByKey_('Orders', 'order_id', orderId);
-  });
+  const deleted = {
+    payments: deleteRowsByKeys_('Payments', 'order_id', orderIds),
+    orderItems: deleteRowsByKeys_('OrderItems', 'order_id', orderIds),
+    orders: deleteRowsByKeys_('Orders', 'order_id', orderIds)
+  };
+  SpreadsheetApp.flush();
 
   logSync_({
     actor: 'pos',
@@ -490,16 +490,22 @@ function updateOrderItemsStatus_(orderId, status) {
 }
 
 function deleteRowsByKey_(sheetName, keyHeader, keyValue) {
+  return deleteRowsByKeys_(sheetName, keyHeader, [keyValue]);
+}
+
+function deleteRowsByKeys_(sheetName, keyHeader, keyValues) {
   const sheet = sheet_(sheetName);
   const values = sheet.getDataRange().getDisplayValues();
   if (values.length < 2) return 0;
   const headers = values[0];
   const keyCol = headers.indexOf(keyHeader);
   if (keyCol === -1) return 0;
+  const keySet = new Set((keyValues || []).filter(Boolean).map(String));
+  if (!keySet.size) return 0;
 
   let deleted = 0;
   for (let row = values.length - 1; row >= 1; row--) {
-    if (values[row][keyCol] === keyValue) {
+    if (keySet.has(String(values[row][keyCol]))) {
       sheet.deleteRow(row + 1);
       deleted++;
     }

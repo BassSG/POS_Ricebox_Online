@@ -108,6 +108,7 @@ let notificationSoundUnlocked = false;
 let lastNotificationSoundAt = 0;
 let quickAddonSelections = {};
 let pendingRestoreArchiveId = '';
+let clearProgressTimer = null;
 
 const UI_CLOCK_INTERVAL_MS = 30000;
 const SHEET_POLL_INTERVAL_MS = 20000;
@@ -125,6 +126,7 @@ function loadState() {
     inventory: normalizeInventory(saved.inventory || DEFAULT_INVENTORY),
     orders: saved.orders || [],
     clearHistory: normalizeClearHistory(saved.clearHistory || []),
+    clearedOrderIds: Array.isArray(saved.clearedOrderIds) ? saved.clearedOrderIds.slice(0, 1200) : [],
     syncQueue: saved.syncQueue || [],
     settings: {
       sheetId: CONFIG.sheetId,
@@ -142,6 +144,7 @@ function saveState() {
     inventory: state.inventory,
     orders: state.orders.slice(0, 250),
     clearHistory: state.clearHistory.slice(0, 60),
+    clearedOrderIds: state.clearedOrderIds.slice(0, 1200),
     syncQueue: state.syncQueue,
     settings: state.settings,
     cart: state.cart
@@ -388,6 +391,25 @@ function summarizeClearOrders(orders = []) {
     sales: active.reduce((sum, order) => sum + orderSales(order), 0),
     boxes: active.reduce((sum, order) => sum + orderBoxes(order), 0)
   };
+}
+
+function clearedOrderSet() {
+  return new Set(state.clearedOrderIds || []);
+}
+
+function isClearedOrderId(orderId) {
+  return Boolean(orderId && clearedOrderSet().has(orderId));
+}
+
+function rememberClearedOrderIds(orderIds = []) {
+  const merged = new Set(state.clearedOrderIds || []);
+  orderIds.filter(Boolean).forEach((orderId) => merged.add(orderId));
+  state.clearedOrderIds = [...merged].slice(-1200);
+}
+
+function forgetClearedOrderIds(orderIds = []) {
+  const restored = new Set(orderIds.filter(Boolean));
+  state.clearedOrderIds = (state.clearedOrderIds || []).filter((orderId) => !restored.has(orderId));
 }
 
 function paymentLabel(value) {
@@ -1271,6 +1293,51 @@ function closeClearDataModal() {
   document.getElementById('clearDataModal').classList.add('hidden');
 }
 
+function updateClearProgress(percent, title, detail = '') {
+  const modal = document.getElementById('clearProgressModal');
+  const fill = document.getElementById('clearProgressFill');
+  const percentEl = document.getElementById('clearProgressPercent');
+  const titleEl = document.getElementById('clearProgressTitle');
+  const detailEl = document.getElementById('clearProgressDetail');
+  if (!modal || !fill || !percentEl || !titleEl || !detailEl) return;
+  const value = Math.max(0, Math.min(100, Math.round(percent)));
+  fill.style.width = `${value}%`;
+  percentEl.textContent = `${value}%`;
+  titleEl.textContent = title;
+  detailEl.textContent = detail;
+}
+
+function openClearProgressModal(archive) {
+  const summary = summarizeClearOrders(archive.orders || []);
+  const meta = document.getElementById('clearProgressMeta');
+  const doneButton = document.getElementById('clearProgressDoneButton');
+  if (meta) {
+    meta.innerHTML = `
+      <span>${summary.orders.toLocaleString('th-TH')} orders</span>
+      <span>${summary.boxes.toLocaleString('th-TH')} กล่อง</span>
+      <span>${baht(summary.sales)}</span>
+    `;
+  }
+  if (doneButton) doneButton.classList.add('hidden');
+  document.getElementById('clearProgressModal')?.classList.remove('hidden');
+  updateClearProgress(4, 'กำลังเตรียมรอบล้างข้อมูล', archive.name);
+}
+
+function finishClearProgress(title, detail = '', tone = 'done') {
+  window.clearTimeout(clearProgressTimer);
+  updateClearProgress(tone === 'error' ? 92 : 100, title, detail);
+  const doneButton = document.getElementById('clearProgressDoneButton');
+  if (doneButton) doneButton.classList.remove('hidden');
+  const modal = document.getElementById('clearProgressModal');
+  modal?.classList.toggle('is-error', tone === 'error');
+}
+
+function closeClearProgressModal() {
+  window.clearTimeout(clearProgressTimer);
+  document.getElementById('clearProgressModal')?.classList.add('hidden');
+  document.getElementById('clearProgressModal')?.classList.remove('is-error');
+}
+
 function openClearHistoryModal() {
   renderClearHistoryList();
   document.getElementById('clearHistoryModal').classList.remove('hidden');
@@ -1364,7 +1431,11 @@ async function confirmClearData() {
   }
 
   const archive = buildClearArchive(name);
+  const clearedIds = archive.orders.map((order) => order.order_id).filter(Boolean);
+  openClearProgressModal(archive);
+  updateClearProgress(18, 'กำลังล็อกออเดอร์ที่กำลังล้าง', 'ป้องกันไม่ให้ข้อมูลค้างจาก Sheet เด้งกลับมาเป็นออเดอร์ใหม่');
   state.clearHistory = normalizeClearHistory([archive, ...state.clearHistory]).slice(0, 60);
+  rememberClearedOrderIds(clearedIds);
   state.orders = [];
   removeOrderJobsFromSyncQueue();
   if (state.settings.appsScriptUrl) {
@@ -1379,11 +1450,28 @@ async function confirmClearData() {
   closeClearDataModal();
   render();
 
-  if (state.settings.appsScriptUrl) {
-    showToast('ล้างข้อมูลแล้ว กำลังเก็บ History ลง Google Sheet...');
-    await flushSyncQueue({ successMessage: 'ล้างข้อมูลและเก็บ History ลง Sheet แล้ว' });
-  } else {
-    showToast('ล้างข้อมูลและเก็บ History ในเครื่องแล้ว');
+  try {
+    updateClearProgress(42, 'ล้างข้อมูลบนหน้าเว็บแล้ว', 'กำลังจัดเก็บรอบล้างไว้ใน History');
+    if (state.settings.appsScriptUrl) {
+      updateClearProgress(58, 'กำลังลบข้อมูลใน Google Sheet', 'ระบบจะไม่ดึงออเดอร์ชุดนี้กลับมาระหว่างรอลบ');
+      await flushSyncQueue({ silent: true });
+      updateClearProgress(82, 'กำลังตรวจสอบข้อมูลหลังล้าง', 'โหลดข้อมูลจาก Sheet อีกครั้งโดยไม่แจ้งเตือนออเดอร์ที่ถูกล้าง');
+      await reloadFromSheet({ silent: true, notifyNew: false });
+      const stillPending = state.syncQueue.some((job) => job.action === 'archiveClearOrders' && syncJobArchiveId(job) === archive.archive_id);
+      if (stillPending) {
+        finishClearProgress('ล้างบนหน้าเว็บแล้ว และรอ Sync ต่อ', 'ออเดอร์ชุดนี้ถูกซ่อนแล้ว จะไม่เด้งกลับมาเป็นออเดอร์ใหม่ระหว่างรอ Google Sheet', 'done');
+        showToast('ล้างข้อมูลบนหน้าเว็บแล้ว เหลือรายการรอ Sync ไป Sheet');
+      } else {
+        finishClearProgress('ล้างข้อมูลเสร็จแล้ว', 'เก็บ History และตรวจซ้ำกับ Google Sheet เรียบร้อย');
+        showToast('ล้างข้อมูลและเก็บ History ลง Sheet แล้ว');
+      }
+    } else {
+      finishClearProgress('ล้างข้อมูลในเครื่องเสร็จแล้ว', 'ยังไม่ได้เชื่อม Google Sheet แต่ History ถูกเก็บในเครื่องแล้ว');
+      showToast('ล้างข้อมูลและเก็บ History ในเครื่องแล้ว');
+    }
+  } catch (error) {
+    finishClearProgress('ล้างบนหน้าเว็บแล้ว แต่ Sync ยังไม่สำเร็จ', error.message || String(error), 'error');
+    showToast('ล้างบนหน้าเว็บแล้ว แต่ยังรอ Sync ไป Sheet', 'error');
   }
 }
 
@@ -1439,6 +1527,7 @@ async function restoreClearHistory(archiveId) {
     return;
   }
 
+  forgetClearedOrderIds(restoredOrders.map((order) => order.order_id));
   state.orders = sortKitchenOrders([...state.orders, ...restoredOrders]).reverse();
   archive.restored_at = nowIso();
   archive.restored_by = deviceId();
@@ -2316,6 +2405,7 @@ function mergeOrdersFromSheet(orders) {
   const known = new Map(state.orders.map((order) => [order.order_id, order]));
   orders.forEach((rawOrder) => {
     if (!rawOrder?.order_id) return;
+    if (isClearedOrderId(rawOrder.order_id)) return;
     const remote = normalizeSheetOrder(rawOrder);
     const local = known.get(remote.order_id);
     if (!local) {
@@ -2368,7 +2458,7 @@ async function reloadFromSheet(options = {}) {
     );
     let newOrders = [];
     if (Array.isArray(data.orders)) {
-      newOrders = mergeOrdersFromSheet(data.orders).filter((order) => !knownBefore.has(order.order_id) && normalizeOrderStatus(order.status) === 'new');
+      newOrders = mergeOrdersFromSheet(data.orders).filter((order) => !knownBefore.has(order.order_id) && !isClearedOrderId(order.order_id) && normalizeOrderStatus(order.status) === 'new');
     }
     saveState();
     render();
@@ -2482,11 +2572,13 @@ function exportOrdersCsv() {
 }
 
 function showNewOrderAlert(orders) {
-  newOrderAlertOrders = [...orders, ...newOrderAlertOrders]
+  const visibleOrders = orders.filter((order) => !isClearedOrderId(order.order_id));
+  if (!visibleOrders.length) return;
+  newOrderAlertOrders = [...visibleOrders, ...newOrderAlertOrders]
     .filter((order, index, list) => list.findIndex((entry) => entry.order_id === order.order_id) === index)
     .slice(0, 8);
   const soundPlayed = playNewOrderSound();
-  document.getElementById('newOrderAlertTitle').textContent = `มีออเดอร์ใหม่ ${orders.length} รายการ`;
+  document.getElementById('newOrderAlertTitle').textContent = `มีออเดอร์ใหม่ ${visibleOrders.length} รายการ`;
   document.getElementById('newOrderAlertText').textContent = soundPlayed
     ? 'ตรวจคิว NEW แล้วเริ่มทำตามลำดับเวลาที่เข้ามาก่อน'
     : 'ตรวจคิว NEW แล้วแตะปุ่มเปิดเสียงด้านบน 1 ครั้ง เพื่อให้แจ้งเตือนครั้งถัดไปมีเสียง';
@@ -2645,6 +2737,7 @@ function bindEvents() {
   document.getElementById('closeRestoreHistoryButton')?.addEventListener('click', closeRestoreHistoryModal);
   document.getElementById('cancelRestoreHistoryButton')?.addEventListener('click', closeRestoreHistoryModal);
   document.getElementById('confirmRestoreHistoryButton')?.addEventListener('click', confirmRestoreHistory);
+  document.getElementById('clearProgressDoneButton')?.addEventListener('click', closeClearProgressModal);
   document.getElementById('restoreHistoryModal')?.addEventListener('click', (event) => {
     if (event.target.id === 'restoreHistoryModal') closeRestoreHistoryModal();
   });

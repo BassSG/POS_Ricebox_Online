@@ -369,6 +369,28 @@
       </section>
     </div>
 
+    <div id="clearProgressModal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="clearProgressHeading">
+      <section class="data-modal clear-progress-modal">
+        <div class="clear-progress-icon" aria-hidden="true">%</div>
+        <div>
+          <p class="eyeline">Clearing orders</p>
+          <h2 id="clearProgressHeading">กำลังล้างข้อมูล</h2>
+        </div>
+        <div id="clearProgressMeta" class="clear-progress-meta"></div>
+        <div class="clear-progress-track" aria-hidden="true">
+          <span id="clearProgressFill"></span>
+        </div>
+        <div class="clear-progress-copy">
+          <strong id="clearProgressPercent">0%</strong>
+          <div>
+            <h3 id="clearProgressTitle">กำลังเตรียมข้อมูล</h3>
+            <p id="clearProgressDetail">โปรดรอสักครู่</p>
+          </div>
+        </div>
+        <button id="clearProgressDoneButton" class="primary-button hidden" type="button">เสร็จแล้ว</button>
+      </section>
+    </div>
+
     <div id="orderConfirmModal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="orderConfirmTitle">
       <section class="order-confirm-modal">
         <div class="modal-head">
