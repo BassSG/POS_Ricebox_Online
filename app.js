@@ -109,6 +109,7 @@ let lastNotificationSoundAt = 0;
 let quickAddonSelections = {};
 let pendingRestoreArchiveId = '';
 let clearProgressTimer = null;
+let isSavingOrder = false;
 
 const UI_CLOCK_INTERVAL_MS = 30000;
 const SHEET_POLL_INTERVAL_MS = 20000;
@@ -2136,7 +2137,22 @@ function closeOrderConfirm() {
   document.getElementById('orderConfirmModal').classList.add('hidden');
 }
 
+function showOrderSaving(order, detail = 'กำลังส่งข้อมูลไป Google Sheet') {
+  const overlay = document.getElementById('orderSavingOverlay');
+  const title = document.getElementById('savingOrderTitle');
+  const message = document.getElementById('savingOrderDetail');
+  if (!overlay || !title || !message) return;
+  title.textContent = `กำลังบันทึก ${order.queue_no || 'ออเดอร์'}`;
+  message.textContent = detail;
+  overlay.classList.remove('hidden');
+}
+
+function hideOrderSaving() {
+  document.getElementById('orderSavingOverlay')?.classList.add('hidden');
+}
+
 async function saveOrder(options = {}) {
+  if (isSavingOrder) return;
   updateCartFromInputs();
   if (!state.cart.items.length) {
     showToast('ยังไม่มีรายการอาหารในบิล', 'error');
@@ -2159,17 +2175,30 @@ async function saveOrder(options = {}) {
     device_id: deviceId(),
     sync_status: state.settings.appsScriptUrl ? 'pending' : 'local'
   };
-  state.orders.unshift(order);
-  enqueueSyncJob({ id: order.order_id, action: 'createOrder', payload: { order }, created_at: createdAt });
-  state.cart = freshCart();
-  quickAddonSelections = {};
-  saveState();
-  render();
-  if (state.settings.appsScriptUrl) {
-    showToast(`บันทึก ${order.queue_no} แล้ว กำลัง sync...`);
-    await flushSyncQueue({ successMessage: `บันทึก ${order.queue_no} ลง Google Sheet แล้ว` });
-  } else {
-    showToast(`บันทึก ${order.queue_no} ในเครื่องแล้ว`);
+  isSavingOrder = true;
+  const savingStartedAt = Date.now();
+  showOrderSaving(order, state.settings.appsScriptUrl ? 'กำลังส่งข้อมูลไป Google Sheet' : 'กำลังบันทึกไว้ในเครื่อง');
+  try {
+    state.orders.unshift(order);
+    enqueueSyncJob({ id: order.order_id, action: 'createOrder', payload: { order }, created_at: createdAt });
+    state.cart = freshCart();
+    quickAddonSelections = {};
+    saveState();
+    render();
+    if (state.settings.appsScriptUrl) {
+      showToast(`บันทึก ${order.queue_no} แล้ว กำลัง sync...`);
+      flushSyncQueue({ successMessage: `บันทึก ${order.queue_no} ลง Google Sheet แล้ว` })
+        .catch((error) => showToast(error.message || String(error), 'error'));
+    } else {
+      showToast(`บันทึก ${order.queue_no} ในเครื่องแล้ว`);
+    }
+  } finally {
+    const elapsed = Date.now() - savingStartedAt;
+    if (elapsed < 650) {
+      await new Promise((resolve) => window.setTimeout(resolve, 650 - elapsed));
+    }
+    hideOrderSaving();
+    isSavingOrder = false;
   }
 }
 
