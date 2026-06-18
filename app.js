@@ -4,6 +4,9 @@ const DEVICE_KEY = 'riceBoxPosDeviceId';
 const SOUND_ENABLED_KEY = 'riceBoxPosSoundEnabled';
 const APP_VERSION = CONFIG.appVersion || '1.0.0';
 const BUSINESS_TIME_ZONE = 'Asia/Bangkok';
+const LEGACY_APPS_SCRIPT_URLS = [
+  'https://script.google.com/macros/s/AKfycbw-f28gqtIqIF6RkUkoOmj-IlxkAR-wol6g_WMuOCcALq2R1NamDZKxVzrrcUtHWca-/exec'
+];
 
 const DEFAULT_MENU = [
   {
@@ -121,6 +124,10 @@ const SYNC_RETRY_MAX_MS = 300000;
 
 function loadState() {
   const saved = readJson(STORAGE_KEY, {});
+  const savedAppsScriptUrl = saved.settings?.appsScriptUrl || '';
+  const appsScriptUrl = LEGACY_APPS_SCRIPT_URLS.includes(savedAppsScriptUrl)
+    ? CONFIG.appsScriptUrl
+    : savedAppsScriptUrl || CONFIG.appsScriptUrl || '';
   return {
     menu: normalizeMenu(saved.menu || DEFAULT_MENU),
     addons: normalizeAddons(saved.addons || DEFAULT_ADDONS),
@@ -131,7 +138,7 @@ function loadState() {
     syncQueue: saved.syncQueue || [],
     settings: {
       sheetId: CONFIG.sheetId,
-      appsScriptUrl: saved.settings?.appsScriptUrl || CONFIG.appsScriptUrl || '',
+      appsScriptUrl,
       appToken: saved.settings?.appToken || CONFIG.appToken || ''
     },
     cart: saved.cart || freshCart()
