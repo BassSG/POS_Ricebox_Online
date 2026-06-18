@@ -107,6 +107,7 @@ let notificationSoundEnabled = localStorage.getItem(SOUND_ENABLED_KEY) === 'true
 let notificationSoundUnlocked = false;
 let lastNotificationSoundAt = 0;
 let quickAddonSelections = {};
+let pendingRestoreArchiveId = '';
 
 const UI_CLOCK_INTERVAL_MS = 30000;
 const SHEET_POLL_INTERVAL_MS = 20000;
@@ -123,6 +124,7 @@ function loadState() {
     addons: normalizeAddons(saved.addons || DEFAULT_ADDONS),
     inventory: normalizeInventory(saved.inventory || DEFAULT_INVENTORY),
     orders: saved.orders || [],
+    clearHistory: normalizeClearHistory(saved.clearHistory || []),
     syncQueue: saved.syncQueue || [],
     settings: {
       sheetId: CONFIG.sheetId,
@@ -139,6 +141,7 @@ function saveState() {
     addons: state.addons,
     inventory: state.inventory,
     orders: state.orders.slice(0, 250),
+    clearHistory: state.clearHistory.slice(0, 60),
     syncQueue: state.syncQueue,
     settings: state.settings,
     cart: state.cart
@@ -225,6 +228,30 @@ function normalizeInventory(rows) {
     last_updated: item.last_updated || todayIso(),
     note: item.note || ''
   }));
+}
+
+function normalizeClearHistory(rows) {
+  return rows
+    .map((item, index) => {
+      const orders = Array.isArray(item.orders) ? item.orders : safeJson(item.orders_json, []);
+      const summary = summarizeClearOrders(orders);
+      return {
+        archive_id: item.archive_id || item.id || `archive-${Date.now()}-${index}`,
+        name: item.name || item.clear_name || 'Untitled clear',
+        cleared_at: item.cleared_at || item.created_at || nowIso(),
+        order_count: numberValue(item.order_count) || orders.length || summary.orders,
+        box_count: numberValue(item.box_count) || summary.boxes,
+        gross_sales: numberValue(item.gross_sales) || summary.sales,
+        orders: Array.isArray(orders) ? orders : [],
+        restored_at: item.restored_at || '',
+        restored_by: item.restored_by || '',
+        device_id: item.device_id || '',
+        app_version: item.app_version || '',
+        sync_status: item.sync_status || 'synced',
+        note: item.note || ''
+      };
+    })
+    .sort((a, b) => (dateValue(b.cleared_at)?.getTime() || 0) - (dateValue(a.cleared_at)?.getTime() || 0));
 }
 
 function booleanValue(value) {
@@ -349,6 +376,17 @@ function summarizeOrders(orders) {
     cost,
     profit: sales - cost,
     avgTicket: rows.length ? sales / rows.length : 0
+  };
+}
+
+function summarizeClearOrders(orders = []) {
+  const rows = Array.isArray(orders) ? orders : [];
+  const active = activeOrders(rows);
+  return {
+    orders: rows.length,
+    activeOrders: active.length,
+    sales: active.reduce((sum, order) => sum + orderSales(order), 0),
+    boxes: active.reduce((sum, order) => sum + orderBoxes(order), 0)
   };
 }
 
@@ -484,11 +522,19 @@ function syncJobInventoryId(job) {
   return job.action === 'upsertInventory' ? job.payload?.inventory?.item_id || '' : '';
 }
 
+function syncJobArchiveId(job) {
+  if (job.action === 'archiveClearOrders') return job.payload?.archive?.archive_id || job.payload?.archive_id || '';
+  if (job.action === 'restoreClearHistory') return job.payload?.archive_id || job.payload?.archive?.archive_id || '';
+  return '';
+}
+
 function syncJobKey(job) {
   if (job.action === 'createOrder') return `createOrder:${syncJobOrderId(job)}`;
   if (job.action === 'updateOrderStatus') return `updateOrderStatus:${syncJobOrderId(job)}`;
   if (job.action === 'deleteOrder') return `deleteOrder:${syncJobOrderId(job)}`;
   if (job.action === 'upsertInventory') return `upsertInventory:${syncJobInventoryId(job)}`;
+  if (job.action === 'archiveClearOrders') return `archiveClearOrders:${syncJobArchiveId(job)}`;
+  if (job.action === 'restoreClearHistory') return `restoreClearHistory:${syncJobArchiveId(job)}`;
   return `${job.action}:${job.id}`;
 }
 
@@ -508,7 +554,9 @@ function syncJobLabel(job) {
     createOrder: 'บันทึกออเดอร์',
     updateOrderStatus: 'อัปเดตสถานะ',
     deleteOrder: 'ลบออเดอร์',
-    upsertInventory: 'บันทึกสต็อก'
+    upsertInventory: 'บันทึกสต็อก',
+    archiveClearOrders: 'ล้างข้อมูล/เก็บ History',
+    restoreClearHistory: 'กู้คืน History'
   };
   return labels[job.action] || job.action;
 }
@@ -523,6 +571,14 @@ function syncJobDetail(job) {
   if (job.action === 'upsertInventory') {
     const item = job.payload?.inventory || {};
     return `${item.name || item.item_id || job.id} · ${item.on_hand ?? '-'} ${item.unit || ''}`;
+  }
+  if (job.action === 'archiveClearOrders') {
+    const archive = job.payload?.archive || {};
+    return `${archive.name || archive.archive_id || job.id} · ${archive.order_count || 0} orders`;
+  }
+  if (job.action === 'restoreClearHistory') {
+    const archive = job.payload?.archive || {};
+    return `${archive.name || job.payload?.archive_id || job.id} · restore`;
   }
   return job.id || '';
 }
@@ -996,6 +1052,7 @@ function renderBackoffice() {
   renderMenuManager();
   renderInventory();
   renderSyncQueueStable();
+  renderClearHistoryCount();
 }
 
 function renderSummaryLegacy() {
@@ -1164,6 +1221,252 @@ function openSalesReport() {
 
 function closeSalesReport() {
   document.getElementById('salesReportModal').classList.add('hidden');
+}
+
+function renderClearHistoryCount() {
+  const count = document.getElementById('clearHistoryCount');
+  if (!count) return;
+  const historyCount = state.clearHistory.length;
+  count.textContent = historyCount ? `${historyCount} รอบ` : 'History';
+}
+
+function renderClearDataSummary() {
+  const target = document.getElementById('clearDataSummary');
+  if (!target) return;
+  const summary = summarizeClearOrders(state.orders);
+  target.innerHTML = `
+    <div class="clear-summary-grid">
+      <article>
+        <span>Orders</span>
+        <strong>${summary.orders.toLocaleString('th-TH')}</strong>
+      </article>
+      <article>
+        <span>กล่อง</span>
+        <strong>${summary.boxes.toLocaleString('th-TH')}</strong>
+      </article>
+      <article>
+        <span>ยอดขาย</span>
+        <strong>${baht(summary.sales)}</strong>
+      </article>
+    </div>
+    <p class="hint">ระบบจะล้างเฉพาะออเดอร์ในหลังบ้าน เมนู ราคา สต็อก และการตั้งค่า Google Sheet จะไม่ถูกลบ</p>
+  `;
+}
+
+function openClearDataModal() {
+  if (!state.orders.length) {
+    showToast('ยังไม่มีออเดอร์ให้ล้าง', 'error');
+    return;
+  }
+  const nameInput = document.getElementById('clearDataNameInput');
+  const confirmInput = document.getElementById('clearDataConfirmInput');
+  if (nameInput) nameInput.value = `ปิดรอบ ${new Date().toLocaleDateString('th-TH')}`;
+  if (confirmInput) confirmInput.value = '';
+  renderClearDataSummary();
+  document.getElementById('clearDataModal').classList.remove('hidden');
+  window.setTimeout(() => nameInput?.focus(), 60);
+}
+
+function closeClearDataModal() {
+  document.getElementById('clearDataModal').classList.add('hidden');
+}
+
+function openClearHistoryModal() {
+  renderClearHistoryList();
+  document.getElementById('clearHistoryModal').classList.remove('hidden');
+}
+
+function closeClearHistoryModal() {
+  document.getElementById('clearHistoryModal').classList.add('hidden');
+}
+
+function openRestoreHistoryModal(archiveId) {
+  const archive = state.clearHistory.find((entry) => entry.archive_id === archiveId);
+  if (!archive) {
+    showToast('ไม่พบ History นี้', 'error');
+    return;
+  }
+  pendingRestoreArchiveId = archiveId;
+  const content = document.getElementById('restoreHistoryContent');
+  if (content) {
+    content.innerHTML = `
+      <div class="restore-summary-card">
+        <strong>${escapeHtml(archive.name)}</strong>
+        <span>${new Date(archive.cleared_at).toLocaleString('th-TH')}</span>
+      </div>
+      <div class="clear-summary-grid">
+        <article>
+          <span>Orders</span>
+          <strong>${(archive.order_count || 0).toLocaleString('th-TH')}</strong>
+        </article>
+        <article>
+          <span>กล่อง</span>
+          <strong>${(archive.box_count || 0).toLocaleString('th-TH')}</strong>
+        </article>
+        <article>
+          <span>ยอดขาย</span>
+          <strong>${baht(archive.gross_sales)}</strong>
+        </article>
+      </div>
+      <p class="hint">ระบบจะนำออเดอร์ใน History นี้กลับเข้ากระดานหลังบ้าน และ sync กลับไป Google Sheet เมื่อเชื่อมต่อได้</p>
+    `;
+  }
+  document.getElementById('restoreHistoryModal').classList.remove('hidden');
+}
+
+function closeRestoreHistoryModal() {
+  pendingRestoreArchiveId = '';
+  document.getElementById('restoreHistoryModal').classList.add('hidden');
+}
+
+function buildClearArchive(name) {
+  const orders = JSON.parse(JSON.stringify(state.orders));
+  const summary = summarizeClearOrders(orders);
+  const clearedAt = nowIso();
+  return {
+    archive_id: `HIS-${Date.now()}`,
+    name,
+    cleared_at: clearedAt,
+    order_count: summary.orders,
+    box_count: summary.boxes,
+    gross_sales: summary.sales,
+    orders,
+    restored_at: '',
+    restored_by: '',
+    device_id: deviceId(),
+    app_version: APP_VERSION,
+    sync_status: state.settings.appsScriptUrl ? 'pending' : 'local',
+    note: ''
+  };
+}
+
+function removeOrderJobsFromSyncQueue() {
+  state.syncQueue = state.syncQueue.filter((job) => (
+    !['createOrder', 'updateOrderStatus', 'deleteOrder'].includes(job.action)
+  ));
+}
+
+async function confirmClearData() {
+  const name = document.getElementById('clearDataNameInput').value.trim();
+  const confirmName = document.getElementById('clearDataConfirmInput').value.trim();
+  if (!name) {
+    showToast('กรุณาตั้งชื่อรอบที่จะล้างก่อน', 'error');
+    return;
+  }
+  if (confirmName !== name) {
+    showToast('กรุณาพิมพ์ชื่อรอบให้ตรงกันเพื่อยืนยัน', 'error');
+    return;
+  }
+  if (!state.orders.length) {
+    closeClearDataModal();
+    showToast('ไม่มีออเดอร์ค้างให้ล้างแล้ว');
+    return;
+  }
+
+  const archive = buildClearArchive(name);
+  state.clearHistory = normalizeClearHistory([archive, ...state.clearHistory]).slice(0, 60);
+  state.orders = [];
+  removeOrderJobsFromSyncQueue();
+  if (state.settings.appsScriptUrl) {
+    enqueueSyncJob({
+      id: `${archive.archive_id}-archive`,
+      action: 'archiveClearOrders',
+      payload: { archive },
+      created_at: archive.cleared_at
+    });
+  }
+  saveState();
+  closeClearDataModal();
+  render();
+
+  if (state.settings.appsScriptUrl) {
+    showToast('ล้างข้อมูลแล้ว กำลังเก็บ History ลง Google Sheet...');
+    await flushSyncQueue({ successMessage: 'ล้างข้อมูลและเก็บ History ลง Sheet แล้ว' });
+  } else {
+    showToast('ล้างข้อมูลและเก็บ History ในเครื่องแล้ว');
+  }
+}
+
+function renderClearHistoryList() {
+  const list = document.getElementById('clearHistoryList');
+  if (!list) return;
+  list.innerHTML = state.clearHistory.length
+    ? state.clearHistory.map((archive) => `
+      <article class="history-row ${archive.restored_at ? 'is-restored' : ''}">
+        <div class="history-main">
+          <strong>${escapeHtml(archive.name)}</strong>
+          <span>${new Date(archive.cleared_at).toLocaleString('th-TH')} · ${archive.order_count || 0} orders · ${archive.box_count || 0} กล่อง · ${baht(archive.gross_sales)}</span>
+          ${archive.restored_at ? `<p class="muted">กู้คืนแล้ว ${new Date(archive.restored_at).toLocaleString('th-TH')}</p>` : '<p class="muted">พร้อมกู้คืนกลับเข้าหลังบ้าน</p>'}
+        </div>
+        <div class="history-actions">
+          <span class="status-chip ${archive.sync_status === 'pending' ? 'is-active' : ''}">${escapeHtml(archive.sync_status || 'synced')}</span>
+          <button type="button" class="secondary-button" data-restore-history="${escapeHtml(archive.archive_id)}">กู้คืน</button>
+        </div>
+      </article>
+    `).join('')
+    : '<div class="empty-state">ยังไม่มี History ที่ถูกล้าง</div>';
+  renderClearHistoryCount();
+}
+
+async function reloadClearHistoryFromSheet() {
+  await reloadFromSheet({ silent: true });
+  renderClearHistoryList();
+  showToast('โหลด History จาก Sheet แล้ว');
+}
+
+async function restoreClearHistory(archiveId) {
+  const archive = state.clearHistory.find((entry) => entry.archive_id === archiveId);
+  if (!archive) {
+    showToast('ไม่พบ History นี้', 'error');
+    return;
+  }
+  const orders = Array.isArray(archive.orders) ? archive.orders : [];
+  if (!orders.length) {
+    showToast('History นี้ไม่มีข้อมูลออเดอร์ให้กู้คืน', 'error');
+    return;
+  }
+
+  const existing = new Set(state.orders.map((order) => order.order_id));
+  const restoredOrders = orders
+    .filter((order) => order?.order_id && !existing.has(order.order_id))
+    .map((order) => ({
+      ...order,
+      sync_status: state.settings.appsScriptUrl ? 'pending' : 'local'
+    }));
+
+  if (!restoredOrders.length) {
+    showToast('ออเดอร์ใน History นี้มีอยู่ในหลังบ้านแล้ว');
+    return;
+  }
+
+  state.orders = sortKitchenOrders([...state.orders, ...restoredOrders]).reverse();
+  archive.restored_at = nowIso();
+  archive.restored_by = deviceId();
+  archive.sync_status = state.settings.appsScriptUrl ? 'pending' : 'local';
+  if (state.settings.appsScriptUrl) {
+    enqueueSyncJob({
+      id: `${archive.archive_id}-restore-${Date.now()}`,
+      action: 'restoreClearHistory',
+      payload: { archive_id: archive.archive_id, archive: { ...archive, orders: restoredOrders } },
+      created_at: nowIso()
+    });
+  }
+  saveState();
+  closeRestoreHistoryModal();
+  render();
+  renderClearHistoryList();
+
+  if (state.settings.appsScriptUrl) {
+    showToast('กู้คืนในหน้าเว็บแล้ว กำลัง sync กลับไป Sheet...');
+    await flushSyncQueue({ successMessage: 'กู้คืน History กลับไป Sheet แล้ว' });
+  } else {
+    showToast('กู้คืน History ในเครื่องแล้ว');
+  }
+}
+
+async function confirmRestoreHistory() {
+  if (!pendingRestoreArchiveId) return;
+  await restoreClearHistory(pendingRestoreArchiveId);
 }
 
 function renderOrders() {
@@ -1814,6 +2117,18 @@ function markSyncJobSucceeded(job) {
     const order = state.orders.find((entry) => entry.order_id === job.payload?.order_id);
     if (order) order.sync_status = 'synced';
   }
+  if (job.action === 'archiveClearOrders' || job.action === 'restoreClearHistory') {
+    const archiveId = syncJobArchiveId(job);
+    const archive = state.clearHistory.find((entry) => entry.archive_id === archiveId);
+    if (archive) archive.sync_status = 'synced';
+    if (job.action === 'restoreClearHistory') {
+      const restoredOrders = job.payload?.archive?.orders || [];
+      restoredOrders.forEach((restored) => {
+        const order = state.orders.find((entry) => entry.order_id === restored.order_id);
+        if (order) order.sync_status = 'synced';
+      });
+    }
+  }
 }
 
 function markSyncJobFailed(job, error) {
@@ -1829,10 +2144,11 @@ function markSyncJobFailed(job, error) {
   };
 }
 
-function reconcileSyncQueueWithSheet(remoteOrders = [], remoteInventory = []) {
+function reconcileSyncQueueWithSheet(remoteOrders = [], remoteInventory = [], remoteHistory = []) {
   if (!state.syncQueue.length) return 0;
   const ordersById = new Map(remoteOrders.filter((order) => order?.order_id).map((order) => [order.order_id, normalizeSheetOrder(order)]));
   const inventoryById = new Map(remoteInventory.filter((item) => item?.item_id).map((item) => [item.item_id, item]));
+  const historyById = new Map(remoteHistory.filter((item) => item?.archive_id).map((item) => [item.archive_id, item]));
   const before = state.syncQueue.length;
 
   state.syncQueue = state.syncQueue.filter((job) => {
@@ -1859,6 +2175,20 @@ function reconcileSyncQueueWithSheet(remoteOrders = [], remoteInventory = []) {
       const sameReorder = numberValue(remote.reorder_level) === numberValue(local.reorder_level);
       const sameCost = numberValue(remote.cost_per_unit) === numberValue(local.cost_per_unit);
       return !(sameStock && sameReorder && sameCost);
+    }
+
+    if (job.action === 'archiveClearOrders') {
+      const remote = historyById.get(syncJobArchiveId(job));
+      if (!remote) return true;
+      markSyncJobSucceeded(job);
+      return false;
+    }
+
+    if (job.action === 'restoreClearHistory') {
+      const archive = historyById.get(syncJobArchiveId(job));
+      if (!archive || !archive.restored_at) return true;
+      markSyncJobSucceeded(job);
+      return false;
     }
 
     return true;
@@ -2005,6 +2335,23 @@ function mergeOrdersFromSheet(orders) {
   return newOrders;
 }
 
+function mergeClearHistoryFromSheet(historyRows = []) {
+  const localById = new Map(state.clearHistory.map((entry) => [entry.archive_id, entry]));
+  normalizeClearHistory(historyRows).forEach((remote) => {
+    const local = localById.get(remote.archive_id);
+    if (!local) {
+      state.clearHistory.push(remote);
+      return;
+    }
+    Object.assign(local, {
+      ...remote,
+      orders: remote.orders.length ? remote.orders : local.orders,
+      sync_status: 'synced'
+    });
+  });
+  state.clearHistory = normalizeClearHistory(state.clearHistory).slice(0, 60);
+}
+
 async function reloadFromSheet(options = {}) {
   const { silent = false, notifyNew = false } = options;
   try {
@@ -2013,7 +2360,12 @@ async function reloadFromSheet(options = {}) {
     if (Array.isArray(data.menu) && data.menu.length) state.menu = normalizeMenu(data.menu);
     if (Array.isArray(data.addOns) && data.addOns.length) state.addons = normalizeAddons(data.addOns);
     if (Array.isArray(data.inventory) && data.inventory.length) state.inventory = normalizeInventory(data.inventory);
-    reconcileSyncQueueWithSheet(Array.isArray(data.orders) ? data.orders : [], Array.isArray(data.inventory) ? data.inventory : []);
+    if (Array.isArray(data.clearHistory)) mergeClearHistoryFromSheet(data.clearHistory);
+    reconcileSyncQueueWithSheet(
+      Array.isArray(data.orders) ? data.orders : [],
+      Array.isArray(data.inventory) ? data.inventory : [],
+      Array.isArray(data.clearHistory) ? data.clearHistory : []
+    );
     let newOrders = [];
     if (Array.isArray(data.orders)) {
       newOrders = mergeOrdersFromSheet(data.orders).filter((order) => !knownBefore.has(order.order_id) && normalizeOrderStatus(order.status) === 'new');
@@ -2042,7 +2394,11 @@ async function retrySyncQueueNow() {
 async function cleanResolvedSyncQueue() {
   try {
     const data = await apiCall('bootstrap', {});
-    const removed = reconcileSyncQueueWithSheet(Array.isArray(data.orders) ? data.orders : [], Array.isArray(data.inventory) ? data.inventory : []);
+    const removed = reconcileSyncQueueWithSheet(
+      Array.isArray(data.orders) ? data.orders : [],
+      Array.isArray(data.inventory) ? data.inventory : [],
+      Array.isArray(data.clearHistory) ? data.clearHistory : []
+    );
     saveState();
     render();
     showToast(removed > 0 ? `Cleaned ${removed} resolved sync jobs` : 'No resolved sync jobs found');
@@ -2269,6 +2625,29 @@ function bindEvents() {
   document.getElementById('salesReportModal').addEventListener('click', (event) => {
     if (event.target.id === 'salesReportModal') closeSalesReport();
   });
+  document.getElementById('clearDataButton')?.addEventListener('click', openClearDataModal);
+  document.getElementById('clearHistoryButton')?.addEventListener('click', openClearHistoryModal);
+  document.getElementById('closeClearDataButton')?.addEventListener('click', closeClearDataModal);
+  document.getElementById('cancelClearDataButton')?.addEventListener('click', closeClearDataModal);
+  document.getElementById('confirmClearDataButton')?.addEventListener('click', confirmClearData);
+  document.getElementById('clearDataModal')?.addEventListener('click', (event) => {
+    if (event.target.id === 'clearDataModal') closeClearDataModal();
+  });
+  document.getElementById('closeClearHistoryButton')?.addEventListener('click', closeClearHistoryModal);
+  document.getElementById('reloadClearHistoryButton')?.addEventListener('click', reloadClearHistoryFromSheet);
+  document.getElementById('clearHistoryModal')?.addEventListener('click', (event) => {
+    if (event.target.id === 'clearHistoryModal') closeClearHistoryModal();
+  });
+  document.getElementById('clearHistoryList')?.addEventListener('click', (event) => {
+    const restoreButton = event.target.closest('[data-restore-history]');
+    if (restoreButton) openRestoreHistoryModal(restoreButton.dataset.restoreHistory);
+  });
+  document.getElementById('closeRestoreHistoryButton')?.addEventListener('click', closeRestoreHistoryModal);
+  document.getElementById('cancelRestoreHistoryButton')?.addEventListener('click', closeRestoreHistoryModal);
+  document.getElementById('confirmRestoreHistoryButton')?.addEventListener('click', confirmRestoreHistory);
+  document.getElementById('restoreHistoryModal')?.addEventListener('click', (event) => {
+    if (event.target.id === 'restoreHistoryModal') closeRestoreHistoryModal();
+  });
   document.getElementById('viewNewOrdersButton').addEventListener('click', viewNewOrdersFromAlert);
   document.getElementById('dismissNewOrderAlertButton').addEventListener('click', hideNewOrderAlert);
   document.getElementById('newOrderAlertModal').addEventListener('click', (event) => {
@@ -2278,6 +2657,9 @@ function bindEvents() {
     if (event.key === 'Escape') {
       closeOrderConfirm();
       closeSalesReport();
+      closeClearDataModal();
+      closeClearHistoryModal();
+      closeRestoreHistoryModal();
       hideNewOrderAlert();
     }
   });

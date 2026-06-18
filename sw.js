@@ -1,4 +1,4 @@
-const CACHE_NAME = 'ricebox-pos-v17';
+const CACHE_NAME = 'ricebox-pos-v18';
 const ASSETS = [
   './',
   './index.html',

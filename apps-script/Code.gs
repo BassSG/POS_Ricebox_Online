@@ -10,6 +10,7 @@ const HEADERS = {
   Payments: ['payment_id', 'order_id', 'created_at', 'method', 'amount', 'status', 'reference', 'received_by', 'note'],
   Inventory: ['item_id', 'name', 'category', 'unit', 'on_hand', 'reorder_level', 'cost_per_unit', 'supplier', 'last_updated', 'note'],
   DailySummary: ['date', 'orders', 'boxes_sold', 'gross_sales', 'discounts', 'net_sales', 'cash', 'transfer', 'platform', 'avg_ticket', 'estimated_cost', 'estimated_profit'],
+  ClearHistory: ['archive_id', 'name', 'cleared_at', 'order_count', 'box_count', 'gross_sales', 'orders_json', 'restored_at', 'restored_by', 'device_id', 'app_version', 'note'],
   SyncLog: ['synced_at', 'actor', 'action', 'status', 'message', 'payload_json', 'device_id', 'app_version']
 };
 
@@ -59,6 +60,12 @@ function route_(request) {
       case 'deleteOrder':
         result = deleteOrder_(request.payload, request);
         break;
+      case 'archiveClearOrders':
+        result = archiveClearOrders_(request.payload, request);
+        break;
+      case 'restoreClearHistory':
+        result = restoreClearHistory_(request.payload, request);
+        break;
       case 'upsertMenu':
         result = upsertMenu_(request.payload.menu, request);
         break;
@@ -98,8 +105,18 @@ function ss_() {
 }
 
 function sheet_(name) {
-  const sheet = ss_().getSheetByName(name);
+  const spreadsheet = ss_();
+  let sheet = spreadsheet.getSheetByName(name);
+  if (!sheet && HEADERS[name]) {
+    sheet = spreadsheet.insertSheet(name);
+    sheet.appendRow(HEADERS[name]);
+    sheet.setFrozenRows(1);
+  }
   if (!sheet) throw new Error('Missing sheet tab: ' + name);
+  if (HEADERS[name] && sheet.getLastRow() === 0) {
+    sheet.appendRow(HEADERS[name]);
+    sheet.setFrozenRows(1);
+  }
   return sheet;
 }
 
@@ -127,6 +144,7 @@ function bootstrap_() {
     addOns: rows_('AddOns').filter((row) => String(row.active).toUpperCase() !== 'FALSE'),
     inventory: rows_('Inventory'),
     orders: rows_('Orders').slice(-50).reverse(),
+    clearHistory: rows_('ClearHistory').slice(-30).reverse(),
     summary: summary_()
   };
 }
@@ -249,6 +267,96 @@ function deleteOrder_(payload, request) {
   return { orderId: orderId, deleted: deleted };
 }
 
+function archiveClearOrders_(payload, request) {
+  const archive = payload && payload.archive ? payload.archive : payload;
+  if (!archive || !archive.archive_id) throw new Error('Missing archive');
+  const orders = Array.isArray(archive.orders) ? archive.orders : safeJson_(archive.orders_json, []);
+  const orderIds = orders.map((order) => order && order.order_id).filter(Boolean);
+  const rowObject = {
+    archive_id: archive.archive_id,
+    name: archive.name || 'Untitled clear',
+    cleared_at: archive.cleared_at || new Date().toISOString(),
+    order_count: number_(archive.order_count || orders.length),
+    box_count: number_(archive.box_count),
+    gross_sales: number_(archive.gross_sales),
+    orders_json: JSON.stringify(orders),
+    restored_at: archive.restored_at || '',
+    restored_by: archive.restored_by || '',
+    device_id: archive.device_id || request.deviceId || '',
+    app_version: archive.app_version || request.appVersion || '',
+    note: archive.note || ''
+  };
+
+  upsertClearHistory_(rowObject);
+
+  const deleted = { payments: 0, orderItems: 0, orders: 0 };
+  orderIds.forEach((orderId) => {
+    deleted.payments += deleteRowsByKey_('Payments', 'order_id', orderId);
+    deleted.orderItems += deleteRowsByKey_('OrderItems', 'order_id', orderId);
+    deleted.orders += deleteRowsByKey_('Orders', 'order_id', orderId);
+  });
+
+  logSync_({
+    actor: 'pos',
+    action: 'archiveClearOrders',
+    status: 'success',
+    message: archive.archive_id,
+    payload_json: JSON.stringify({ archive_id: archive.archive_id, order_count: orders.length, deleted: deleted }),
+    device_id: request.deviceId || '',
+    app_version: request.appVersion || ''
+  });
+
+  return { archiveId: archive.archive_id, deleted: deleted };
+}
+
+function restoreClearHistory_(payload, request) {
+  const archiveId = payload && (payload.archive_id || (payload.archive && payload.archive.archive_id));
+  if (!archiveId) throw new Error('Missing archive_id');
+  let archive = getClearHistory_(archiveId);
+  if (!archive && payload.archive) {
+    archive = payload.archive;
+    upsertClearHistory_({
+      archive_id: archive.archive_id,
+      name: archive.name || 'Untitled clear',
+      cleared_at: archive.cleared_at || new Date().toISOString(),
+      order_count: number_(archive.order_count),
+      box_count: number_(archive.box_count),
+      gross_sales: number_(archive.gross_sales),
+      orders_json: JSON.stringify(Array.isArray(archive.orders) ? archive.orders : []),
+      restored_at: '',
+      restored_by: '',
+      device_id: archive.device_id || request.deviceId || '',
+      app_version: archive.app_version || request.appVersion || '',
+      note: archive.note || ''
+    });
+  }
+  if (!archive) throw new Error('History not found: ' + archiveId);
+
+  const orders = Array.isArray(archive.orders) ? archive.orders : safeJson_(archive.orders_json, []);
+  let restored = 0;
+  orders.forEach((order) => {
+    if (!order || !order.order_id) return;
+    if (findRowIndex_('Orders', 'order_id', order.order_id) !== -1) return;
+    createOrder_(order, request);
+    restored++;
+  });
+
+  const restoredAt = new Date().toISOString();
+  updateClearHistoryRestore_(archiveId, restoredAt, request.deviceId || '');
+
+  logSync_({
+    actor: 'pos',
+    action: 'restoreClearHistory',
+    status: 'success',
+    message: archiveId + ' restored ' + restored,
+    payload_json: JSON.stringify({ archive_id: archiveId, restored: restored }),
+    device_id: request.deviceId || '',
+    app_version: request.appVersion || ''
+  });
+
+  return { archiveId: archiveId, restored: restored, restoredAt: restoredAt };
+}
+
 function upsertMenu_(menu, request) {
   if (!menu || !menu.menu_id) throw new Error('Missing menu');
   const sheet = sheet_('Menu');
@@ -321,6 +429,28 @@ function upsertInventory_(inventory, request) {
   });
 
   return { itemId: inventory.item_id };
+}
+
+function getClearHistory_(archiveId) {
+  return rows_('ClearHistory').find((row) => row.archive_id === archiveId) || null;
+}
+
+function upsertClearHistory_(archive) {
+  const sheet = sheet_('ClearHistory');
+  const rowIndex = findRowIndex_('ClearHistory', 'archive_id', archive.archive_id);
+  const values = HEADERS.ClearHistory.map((header) => archive[header] === undefined ? '' : archive[header]);
+  if (rowIndex === -1) {
+    sheet.appendRow(values);
+  } else {
+    sheet.getRange(rowIndex, 1, 1, values.length).setValues([values]);
+  }
+}
+
+function updateClearHistoryRestore_(archiveId, restoredAt, restoredBy) {
+  updateCellByKey_('ClearHistory', 'archive_id', archiveId, {
+    restored_at: restoredAt,
+    restored_by: restoredBy
+  });
 }
 
 function summary_() {
@@ -404,6 +534,15 @@ function lineCost_(item) {
 function number_(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function safeJson_(value, fallback) {
+  try {
+    if (!value) return fallback;
+    return typeof value === 'string' ? JSON.parse(value) : value;
+  } catch (error) {
+    return fallback;
+  }
 }
 
 function logSync_(entry) {
