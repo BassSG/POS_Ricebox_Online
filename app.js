@@ -369,6 +369,15 @@ function thaiDateLabel(dateKey) {
   });
 }
 
+function thaiShortDateLabel(dateKey) {
+  const date = new Date(`${dateKey}T00:00:00+07:00`);
+  return date.toLocaleDateString('th-TH', {
+    timeZone: BUSINESS_TIME_ZONE,
+    day: 'numeric',
+    month: 'short'
+  });
+}
+
 function recentBusinessDates(days) {
   return Array.from({ length: days }, (_, index) => {
     const date = new Date();
@@ -971,6 +980,7 @@ function render() {
     renderMenuModern();
     renderCart();
   }
+  if (activeView === 'dashboard') renderDashboard();
   if (activeView === 'backoffice') renderBackoffice();
   if (activeView === 'settings') renderSettings();
   updateSyncUi();
@@ -985,6 +995,187 @@ function renderToday() {
   document.getElementById('deviceIdLabel').textContent = deviceId();
   const hour = date.getHours();
   document.getElementById('openStatus').textContent = hour >= 9 && hour < 15 ? 'Open now' : 'Prep / closed';
+}
+
+function compactBaht(value) {
+  const rounded = Math.round(numberValue(value));
+  if (rounded >= 1000000) return `${(rounded / 1000000).toFixed(1)}M`;
+  if (rounded >= 10000) return `${Math.round(rounded / 1000).toLocaleString('th-TH')}k`;
+  return rounded.toLocaleString('th-TH');
+}
+
+function dashboardMetricCard(label, value, note, tone = '') {
+  return `
+    <article class="dashboard-metric-card ${tone ? `is-${tone}` : ''}">
+      <span class="small-label">${escapeHtml(label)}</span>
+      <strong>${escapeHtml(value)}</strong>
+      <p class="muted">${escapeHtml(note)}</p>
+    </article>
+  `;
+}
+
+function dashboardTrendRows() {
+  return recentBusinessDates(7).reverse().map((key) => {
+    const orders = activeOrders().filter((order) => orderDateKey(order) === key);
+    return {
+      key,
+      label: thaiShortDateLabel(key),
+      summary: summarizeOrders(orders)
+    };
+  });
+}
+
+function topMenuRows(orders) {
+  const menuMap = new Map();
+  activeOrders(orders).forEach((order) => {
+    orderItems(order).map(normalizeOrderItemForTotals).forEach((item) => {
+      const menuId = item.menu_id || item.menu_name || item.name || 'unknown';
+      const current = menuMap.get(menuId) || {
+        menu_id: menuId,
+        name: item.menu_name || item.name || menuId,
+        qty: 0,
+        sales: 0,
+        cost: 0
+      };
+      current.qty += numberValue(item.qty) || 1;
+      current.sales += lineTotal(item);
+      current.cost += lineCost(item);
+      menuMap.set(menuId, current);
+    });
+  });
+  return Array.from(menuMap.values()).sort((a, b) => b.qty - a.qty || b.sales - a.sales || a.name.localeCompare(b.name, 'th'));
+}
+
+function lowStockRows() {
+  return state.inventory
+    .map((item) => {
+      const onHand = numberValue(item.on_hand);
+      const reorder = numberValue(item.reorder_level);
+      const percent = reorder > 0 ? Math.min(100, Math.max(0, (onHand / reorder) * 100)) : 100;
+      return {
+        ...item,
+        onHand,
+        reorder,
+        percent,
+        shortage: Math.max(0, reorder - onHand)
+      };
+    })
+    .filter((item) => item.onHand <= item.reorder)
+    .sort((a, b) => a.percent - b.percent || b.shortage - a.shortage || a.name.localeCompare(b.name, 'th'));
+}
+
+function salesTrendChartHtml(rows) {
+  const maxSales = Math.max(1, ...rows.map((row) => row.summary.sales));
+  const compact = window.matchMedia?.('(max-width: 720px)').matches;
+  const width = compact ? 380 : 720;
+  const height = compact ? 240 : 280;
+  const left = compact ? 34 : 50;
+  const right = compact ? 18 : 26;
+  const top = compact ? 24 : 32;
+  const chartHeight = compact ? 118 : 156;
+  const baseY = top + chartHeight;
+  const step = (width - left - right) / Math.max(1, rows.length - 1);
+  const barWidth = compact ? 16 : 30;
+  const points = rows.map((row, index) => {
+    const x = left + (step * index);
+    const y = baseY - ((row.summary.sales / maxSales) * chartHeight);
+    return { ...row, x, y };
+  });
+  const linePoints = points.map((point) => `${point.x},${point.y}`).join(' ');
+  const areaPoints = `${left},${baseY} ${linePoints} ${width - right},${baseY}`;
+  const grid = [0, 0.25, 0.5, 0.75, 1].map((ratio) => {
+    const y = baseY - (ratio * chartHeight);
+    return `<line x1="${left}" x2="${width - right}" y1="${y}" y2="${y}" class="trend-grid-line"></line>`;
+  }).join('');
+  const bars = points.map((point) => {
+    const barHeight = Math.max(4, (point.summary.sales / maxSales) * chartHeight);
+    return `
+      <rect class="trend-bar" x="${point.x - (barWidth / 2)}" y="${baseY - barHeight}" width="${barWidth}" height="${barHeight}" rx="10"></rect>
+      <circle class="trend-point" cx="${point.x}" cy="${point.y}" r="5"></circle>
+      <text class="trend-value" x="${point.x}" y="${Math.max(16, point.y - 12)}">${compactBaht(point.summary.sales)}</text>
+      <text class="trend-label" x="${point.x}" y="${height - 24}">${escapeHtml(point.label.replace(/\s+/g, ' '))}</text>
+    `;
+  }).join('');
+
+  return `
+    <svg class="sales-trend-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="Sales Trend 7 Days">
+      ${grid}
+      <polygon class="trend-area" points="${areaPoints}"></polygon>
+      ${bars}
+      <polyline class="trend-line" points="${linePoints}"></polyline>
+    </svg>
+  `;
+}
+
+function topMenuTableHtml(rows) {
+  const topRows = rows.slice(0, 8);
+  const maxQty = Math.max(1, ...topRows.map((row) => row.qty));
+  if (!topRows.length) {
+    return '<div class="empty-state">ยังไม่มีข้อมูลเมนูขายดีในช่วง 7 วันล่าสุด</div>';
+  }
+  return topRows.map((row, index) => {
+    const progress = Math.max(6, Math.round((row.qty / maxQty) * 100));
+    return `
+      <article class="dashboard-data-row">
+        <span class="dashboard-rank">${String(index + 1).padStart(2, '0')}</span>
+        <div class="dashboard-row-main">
+          <strong>${escapeHtml(row.name)}</strong>
+          <span>${row.qty.toLocaleString('th-TH')} กล่อง · ${baht(row.sales)}</span>
+          <div class="dashboard-progress" aria-hidden="true"><span style="width: ${progress}%"></span></div>
+        </div>
+        <em>${baht(row.sales - row.cost)}</em>
+      </article>
+    `;
+  }).join('');
+}
+
+function lowStockTableHtml(rows) {
+  if (!rows.length) {
+    return '<div class="empty-state">สต็อกยังปลอดภัย ไม่มีรายการต่ำกว่าจุดซื้อเพิ่ม</div>';
+  }
+  return rows.slice(0, 8).map((item) => {
+    const progress = Math.max(4, Math.round(item.percent));
+    const needText = item.shortage > 0 ? `ควรซื้อเพิ่ม ${item.shortage.toLocaleString('th-TH')} ${item.unit}` : 'ถึงจุดซื้อเพิ่มแล้ว';
+    return `
+      <article class="dashboard-data-row is-low-stock">
+        <span class="dashboard-stock-dot" aria-hidden="true"></span>
+        <div class="dashboard-row-main">
+          <strong>${escapeHtml(item.name)}</strong>
+          <span>เหลือ ${item.onHand.toLocaleString('th-TH')} ${escapeHtml(item.unit)} · จุดซื้อ ${item.reorder.toLocaleString('th-TH')} ${escapeHtml(item.unit)}</span>
+          <div class="dashboard-progress is-stock" aria-hidden="true"><span style="width: ${progress}%"></span></div>
+        </div>
+        <em>${escapeHtml(needText)}</em>
+      </article>
+    `;
+  }).join('');
+}
+
+function renderDashboard() {
+  const todayKey = businessDateKey();
+  const todayOrders = activeOrders().filter((order) => orderDateKey(order) === todayKey);
+  const todaySummary = summarizeOrders(todayOrders);
+  const trendRows = dashboardTrendRows();
+  const trendOrders = activeOrders().filter((order) => trendRows.some((row) => row.key === orderDateKey(order)));
+  const trendSummary = summarizeOrders(trendOrders);
+  const topMenus = topMenuRows(trendOrders);
+  const todayTopMenu = topMenuRows(todayOrders)[0] || topMenus[0];
+  const lowStocks = lowStockRows();
+
+  document.getElementById('dashboardTodayLabel').textContent = thaiDateLabel(todayKey);
+  document.getElementById('dashboardMetrics').innerHTML = [
+    dashboardMetricCard('Today Sales', baht(todaySummary.sales), `${todaySummary.orders} บิล · ${todaySummary.boxes} กล่อง`, 'sales'),
+    dashboardMetricCard('Bills', `${todaySummary.orders.toLocaleString('th-TH')} บิล`, `ออเดอร์วันนี้ ไม่รวม void`, 'bills'),
+    dashboardMetricCard('Average Bill', baht(todaySummary.avgTicket), todaySummary.orders ? 'เฉลี่ยต่อบิลวันนี้' : 'ยังไม่มีบิลวันนี้', 'average'),
+    dashboardMetricCard('Top Menu', todayTopMenu ? todayTopMenu.name : '-', todayTopMenu ? `${todayTopMenu.qty.toLocaleString('th-TH')} กล่องในช่วงล่าสุด` : 'ยังไม่มีเมนูขายดี', 'menu'),
+    dashboardMetricCard('Low Stock', lowStocks.length ? `${lowStocks.length.toLocaleString('th-TH')} รายการ` : 'พร้อมขาย', lowStocks.length ? 'ต้องเช็กก่อนซื้อของรอบถัดไป' : 'ยังไม่มีรายการต่ำกว่าจุดซื้อ', lowStocks.length ? 'stock' : 'ok')
+  ].join('');
+
+  document.getElementById('salesTrendTotal').textContent = `${baht(trendSummary.sales)} / 7 วัน`;
+  document.getElementById('salesTrendChart').innerHTML = salesTrendChartHtml(trendRows);
+  document.getElementById('topMenuCount').textContent = `${topMenus.length.toLocaleString('th-TH')} เมนู`;
+  document.getElementById('topMenuTable').innerHTML = topMenuTableHtml(topMenus);
+  document.getElementById('lowStockCount').textContent = lowStocks.length ? `${lowStocks.length.toLocaleString('th-TH')} ต่ำ` : 'พร้อมขาย';
+  document.getElementById('lowStockTable').innerHTML = lowStockTableHtml(lowStocks);
 }
 
 function renderMenu() {

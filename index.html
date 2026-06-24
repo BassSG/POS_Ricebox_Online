@@ -26,6 +26,7 @@
       </div>
       <nav class="view-tabs" aria-label="Main views">
         <button class="view-tab is-active" data-view="pos">หน้าร้าน</button>
+        <button class="view-tab" data-view="dashboard">Dashboard</button>
         <button class="view-tab" data-view="backoffice">หลังบ้าน</button>
         <button class="view-tab" data-view="settings">ตั้งค่า</button>
       </nav>
@@ -151,6 +152,59 @@
               </div>
             </div>
           </aside>
+        </div>
+      </section>
+
+      <section id="dashboardView" class="view" aria-labelledby="dashboard-title">
+        <div class="dashboard-layout">
+          <section class="dashboard-hero-panel">
+            <div>
+              <p class="eyeline">Dashboard</p>
+              <h2 id="dashboard-title">ภาพรวมร้านวันนี้</h2>
+              <p class="dashboard-subtitle">ยอดขาย บิล เมนูขายดี และสต็อกต่ำในหน้าจอเดียว</p>
+            </div>
+            <div class="dashboard-date-card">
+              <span>Today</span>
+              <strong id="dashboardTodayLabel">-</strong>
+            </div>
+          </section>
+
+          <div id="dashboardMetrics" class="dashboard-metrics"></div>
+
+          <div class="dashboard-grid">
+            <section class="panel dashboard-chart-panel">
+              <div class="panel-head">
+                <div>
+                  <p class="eyeline">Sales Trend</p>
+                  <h3>Sales Trend (7 Days)</h3>
+                </div>
+                <span id="salesTrendTotal" class="dashboard-panel-chip">0 บาท</span>
+              </div>
+              <div id="salesTrendChart" class="sales-trend-chart"></div>
+            </section>
+
+            <section class="panel dashboard-table-panel">
+              <div class="panel-head">
+                <div>
+                  <p class="eyeline">Menu Ranking</p>
+                  <h3>Top Menu (By Qty)</h3>
+                </div>
+                <span id="topMenuCount" class="dashboard-panel-chip">0 เมนู</span>
+              </div>
+              <div id="topMenuTable" class="dashboard-table"></div>
+            </section>
+
+            <section class="panel dashboard-table-panel">
+              <div class="panel-head">
+                <div>
+                  <p class="eyeline">Stock Watch</p>
+                  <h3>Low Stock Alert</h3>
+                </div>
+                <span id="lowStockCount" class="dashboard-panel-chip">0 รายการ</span>
+              </div>
+              <div id="lowStockTable" class="dashboard-table"></div>
+            </section>
+          </div>
         </div>
       </section>
 
